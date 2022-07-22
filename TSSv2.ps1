@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-   Collect traces for Windows (ADS/DND/NET/PRF/SHA/UEX) and Netsh(packet capture)/Procmon/PerfMon/PSR/Video/SysMon/WPR/xPerf/TTD asf.
+   Collect traces for several scenarios on Windows.
 
 .DESCRIPTION
    Collect ETW/WPP traces for Windows components 
@@ -8,217 +8,8 @@
    This script supports -StartAutoLogger for ETW traces and in addition to this, BootLogging
    including BootTrace(WPR), persistent=yes(Netsh) and /BootLogging(Procmon) are also supported.
 
-   Run 'Get-Help .\TSSv2.ps1 -full' for more detail.
-
-   USAGE SUMMARY:
-   Script accepts data collection start actions: -Start/-StartAutologger/-StartDiag/-CollectLog 
-   and uses -Stop to stop data collection or stops automatically by trigger with -WaitEvent option supplied.
-
-   a) Start multiple traces, for exmple, UEX_RDS and ADS_Kerb trace, you should use this option if you know exactly what to trace:
-      PS> .\TSSv2.ps1 -UEX_RDS -ADS_Kerb
-
-   b) Start traces for PKI Client scenario to collect ADS basic data:
-      PS> .\TSSv2.ps1 -Scenario ADS_Basic
-
-   c) Start traces for Auth scenario to collect broad set of AUTH data:
-      PS> .\TSSv2.ps1 -Scenario ADS_Auth
-
-   d) Start traces for ADCS (cert authority) service and full AUTH data (recommended way to get full set of data from ADCS):
-      PS> .\TSSv2.ps1 -Scenario ADS_Auth -CustomParams ADS_PKIADCS -ADS_ADCS -netsh
-
-   e) Start traces and WPR/Netsh(packet capturing)/Procmon at the same time:
-      PS> .\TSSv2.ps1 -UEX_RDS -ADS_Auth -WPR General -Netsh -Procmon
-
-   f) Collect WMI, WinRM, Task Scheduler and Print logs:
-      PS> .\TSSv2.ps1 -CollectLog UEX_WMI,UEX_WinRM,UEX_Sched,UEX_Print
-
-   Stop all traces including WPR/Netsh/Procmon/PSR:
-      PS> .\TSSv2.ps1 -Stop
-
-   StartAutoLogger for persistent/boot ETW traces and WPR(BootTrace), Netsh(persistent=yes) and Procmon(BootLogging):
-      PS> .\TSSv2.ps1 -StartAutoLogger -UEX_RDS -WPR General -Netsh -Procmon
-      PS> Restart-Computer
-      PS> .\TSSv2.ps1 -Stop  # Stop all autoLogger sessions and settings
-
-   Collect just logs for each component:
-      PS> .\TSSv2.ps1 -CollectLog UEX_IME,UEX_Print,BasicLog
-
-   Display built-in Help Menu
-      PS> .\TSSv2.ps1 -Help
-
-.NOTES  
-   Requires   : PowerShell V4 (Supported from Windows 8.1/Windows Server 2012 R2) - it fails on older OS with PS v2.0
-   Last update:  by [alias]
-   Version    : see $global:TssVerDate - run .\TSSv2 -ver
-
-.LINK
-	TSSv2 https://internal.support.services.microsoft.com/en-us/help/4619187
-	ADS https://internal.support.services.microsoft.com/en-us/help/4619196
-	NET https://internal.support.services.microsoft.com/en-US/help/4648588
-	DND https://internal.support.services.microsoft.com/en-us/help/4643331
-	SHA https://internal.support.services.microsoft.com/en-us/help/5009525
-	PRF https://internal.support.services.microsoft.com/en-us/help/5009898
-
-.PARAMETER Start
-Starting UEX_RDS trace and WRP/Netsh(packet capturing)/Procmon/PSR depending on options.
-
-.PARAMETER StartAutoLogger
-Set AutoLogger for persistent/boot ETW traces and WRP/Netsh(packet capturing)/Procmon.
-
-.PARAMETER StartNoWait
-Use to start <xxx> (ex. .\TSSv2.ps1 -StartNoWait -UEX_RDS) and fall back to prompt
-Don't wait and the script returns immediately after starting traces.
-
-.PARAMETER Stop
-Stop all active ETW traces and WRP/Netsh(packet capturing)/Procmon/PSR. If traces are running as autologger/persistent mode, -Stop also removes the autologger settings.
-Also this deletes AutoLogger settings if exist.
-
-.PARAMETER RemoveAutoLogger
-Delete all AutoLogger settings. 
-Note this does not cancel WRP(BootTrace)/Netsh(persistent=yes)/Procmon(BootLogging). 
-These are stopped manually after restarting the system.
-
-.PARAMETER CollectLog
-Collect logs for each component:
-      PS> .\TSSv2.ps1 -CollectLog DND_SETUPReport
-
-.PARAMETER WaitEvent 
-Monitoring - see '.\TSSv2.ps1 -Help' and then select 8 = Monitoring feature
-
-.PARAMETER Scenario
-Run a predefined compbination of Component tracing and tools
-See -ListSupportedScenarioTrace for a list of supported Scenario Tracing
-
-.PARAMETER WPR
-Start Windows Performance Recorder profile tracing, i.e. -WPR General
-If used with -StartAutoLogger (i.e. -StartAutoLogger -WPR General), WPR General BootTrace is enabled.
-
-.PARAMETER Netsh
-Start Netsh (packet capturing) session. If used with -StartAutoLogger(i.e. -StartAutoLogger -Netsh), Netsh is started with 'Persisten=yes'.
-
-.PARAMETER NetshScenario
-(ex. .\TSSv2.ps1 -UEX_RDS -NetshScenario InternetClient_dbg)
-Start Netsh (packet capturing) session with scenario trace. If used with -StartAutoLogger (i.e. -StartAutoLogger -NetshScenario InternetClient_dbg), Netsh is started with 'Persistent=yes'.
-
-.PARAMETER Procmon
-Start Procmon. If used with -StartAutoLogger(i.e. -StartAutoLogger -Procmon), BootLogging is enabled.
-
-.PARAMETER PerfMon
-Enable traces and Performance Monitor log.
-
-.PARAMETER PerfIntervalSec
-Use with -PerfMon (ex. .\TSSv2.ps1 -PerfMon -PerfInvervalSec(second))
-Specify log interval for Performance Monitor log.
-
-.PARAMETER Compress
-Log folder('MSLOG' folder on desktop) is compressed after gathering logs.
-
-.PARAMETER Delete
-Use with -Compress. If -Delete, log foder will be deleted after compressing log folder is completed.
-
-.PARAMETER Verbose
-This script will run with verbose messages.
-
-.PARAMETER Find
-Find keyword in TSS help texts that include the specific search keyword
-It also works with regular expressions like "reg.*path"
-
-.PARAMETER FindGUID
-List TSS component-names that include the specific ETL provider GUID
-
-.PARAMETER Help
-Display built-in Help Menu
-
-.PARAMETER List
-List all supported traces in this script
-
-.PARAMETER ListSupportedCommands
-List supported Command-Tools
-
-.PARAMETER ListSupportedNetshScenario
-List supported NETSH scenarios on this computer
-
-.PARAMETER ListSupportedNoOptions
-List supported No* options
-
-.PARAMETER ListSupportedSDP
-List supported SDP reports
-
-.PARAMETER ListSupportedScenarioTrace
-List supported Scenario Tracing
-
-.PARAMETER ListSupportedTrace
-List supported component tracing switches and commands
-
-.PARAMETER SDP
-Collect SDP/MSDT reports (.e. .\TSSv2.ps1 -SDP NET)
-See -ListSupportedSDP for a list of supported SDP reports
-
-.PARAMETER Mini
-Suppress collecting some of per default defined logs i.e.in NET_*scenarios
-
-.PARAMETER Mode
- [for data collection] Run script in "Basic","Advanced","Full","Verbose","Hang","Restart","GetFarmdata","Swarm","Kube","NFSperm" mode. Restart will restart associated service
-
-.PARAMETER Traceinfo
-   PS>.\TSSv2 -TraceInfo all               // Show all trace info
-   PS>.\TSSv2 -TraceInfo <component-name>  // Show all trace info for component-name , i.e. UEX_Print
-   PS>.\TSSv2 -TraceInfo <scenario-name>   // Show all trace info for scenario-name , i.e. NET_Capture
-   PS>.\TSSv2 -TraceInfo <command>         // Show all trace info other than ETW trace, i.e. Procmon
-
-.PARAMETER Update
- can be used together with -UpdMode Online|Quick|Full|Force|Lite
-Update script with latest version. '-UpdMode Online' or '-UpdMode Full' will download full package, 'Quick' will do a differential update, 'Force' will force update even latest version seems installed
-
-.PARAMETER Version
-Dispays TSSv2 dated version number 
-
-.OUTPUTS
-By default, all log files are stored in 'C:\MS_DATA' folder. Location can be changed by -LogFolderName
-
 .EXAMPLE
-.\TSSv2.ps1 -UEX_RDS -Scenario ADS_Auth
-Start UEX_RDS trace and Scenario ADS_Auth
-
-.EXAMPLE
-.\TSSv2.ps1 -UEX_RDS -Scenario ADS_Auth -StartNoWait
-Start trace but the script returns immediately. You can stop the traces with '.\s.ps1 -Stop' later.
-
-.EXAMPLE
-.\TSSv2.ps1 -UEX_RDS -WPR General -Procmon
-Collect UEX_RDS trace, WPR profle General and Procmon at the same time.
-
-.EXAMPLE
-.\TSSv2.ps1 -UEX_RDS -PerfMon General
-start trace and collect Performance Monitor 'General' log at the same time.
-
-.EXAMPLE
-.\TSSv2.ps1 -UEX_RDS -WPR General -Procmon -PSR
-Collect traces, PSR and other tools at the same time.
-
-.EXAMPLE
-.\TSSv2.ps1 -Stop
-Stop traces. You can use -Stop for stopping ETW traces, WPR General, Netsh and Procmon.
-If you have a concern on some traces are still running, just run this command.
-
-.EXAMPLE
-.\TSSv2.ps1 -StartAutoLogger -UEX_RDS 
-Enable AutoLogger setting for persistent/boot UEX_RDS trace
-
-.\TSSv2.ps1 -StartAutoLogger -UEX_RDS -WPR General
-Enable AutoLogger for persistent/boot UEX_RDS trace and WPR General BootTrace 
-
-.EXAMPLE
-.\TSSv2.ps1 -StartAutoLogger -UEX_RDS -WPR General -Netsh -Procmon
-Enable AutoLoggers. After restart of the system, you can stop AutoLogger session with '.\TSSv2.ps1 -Stop'.
-
-.EXAMPLE
-.\TSSv2.ps1 -RemoveAutoLogger
-After enable AutoLogger with '-StartAutoLogger' but in case you want to cancel the AutoLogger, use this option to delete the AutoLogger settings.
-
-.EXAMPLE
-.\TSSv2.ps1 -update
-Update TSSv2 script with latest version. '-UpdMode Full' will download full package, 'Quick' will do a differential update, 'Force' will force update even latest version seems installed
+.\TSSv2.ps1 -CollectLog DND_CodeIntegrity,DND_PNP,DND_Servicing,DND_SETUP,DND_WinUpd,DND_WU,DND_WUlogs
 #>
 
 [CmdletBinding(DefaultParameterSetName='Start')]
@@ -2631,7 +2422,7 @@ Function global:RunCommands{
 		$tmpMsg = $tmpMsg -replace "\-ErrorAction Stop",""
 		$tmpMsg = $tmpMsg -replace "\-ErrorAction SilentlyContinue",""
 		$tmpMsg = $tmpMsg -replace "\-ErrorAction Ignore",""
-		$tmpMsg = $tmpMsg -replace "cmd /r ",""
+		$tmpMsg = $tmpMsg -replace "cmd /r ", ""
 		$CmdlineForDisplayMessage = $tmpMsg -replace "2>&1",""
 
 		# In case of reg.exe, see if it is available can be run.
@@ -9239,10 +9030,10 @@ Function CompressLogIfNeededAndShow{
 				$script:LogZipFileSuffixScn = $Script:RunningScenarioObjectList.ScenarioName
 				$script:LogZipFileSuffix = $script:LogZipFileSuffixScn
 			}ElseIf(![String]::IsNullOrEmpty($Scenario)){ # Case for -StartNoWait + no trace in scenario
-				$Token = $Scenario -split ','
-				ForEach($ScenarioName in $Token){
-					$script:LogZipFileSuffix = $ScenarioName + '_'
-				}
+				#$Token = $Scenario -split ','
+				#ForEach($ScenarioName in $Token){
+				#	$script:LogZipFileSuffix = $ScenarioName + '_'
+				#}
 				$script:LogZipFileSuffix = $script:LogZipFileSuffix  -replace "_$",""
 			}
 
@@ -9389,7 +9180,6 @@ Function CompressLogIfNeededAndShow{
 				LogException $ErrorMessage $_ $fLogFileOnly
 			}
 		}
-		If((!$Remote.IsPresent) -or !($global:IsServerCore)){ Explorer.exe (Split-Path $global:LogFolder -parent) }
 	}Else{
 		If(!$global:BoundParameters.ContainsKey('Discard')){
 			LogInfo "Logs were stored in $global:LogFolder"
@@ -9397,12 +9187,6 @@ Function CompressLogIfNeededAndShow{
 		}
 		$TimeUTC = $((Get-Date).ToUniversalTime().ToString("yyyy-MM-dd_HH:mm:ss"))
 		LogInfoFile "=========== End of TSSv2 Data collection: $TimeUTC UTC ==========="
-		If((!$Remote.IsPresent) -or !($global:IsServerCore)){ Explorer.exe $global:LogFolder }
-	}
-
-	# 10. In case of remoting, also display remote share folder.
-	If($IsCopyToRemoteShareSucceeded){
-		If((!$Remote.IsPresent) -or !($global:IsServerCore)){ Explorer.exe $RemoteLogFolder }
 	}
 	Write-Host ""
 	EndFunc $MyInvocation.MyCommand.Name
@@ -10644,7 +10428,7 @@ Function ProcessStart{
 			LogInfo "There are no running traces. Exiting.."
 		}
 		DisplayDataUploadRequestInError "An error(s) happened during starting traces."
-		If((!$Remote.IsPresent) -or !($global:IsServerCore)){ Explorer.exe $global:logfolder }
+		#If((!$Remote.IsPresent) -or !($global:IsServerCore)){ Explorer.exe $global:logfolder }
 		CleanUpandExit
 	}
 
@@ -10716,7 +10500,7 @@ Function ProcessStart{
 					LogInfo "There are no running traces. Exiting.."
 				}
 				DisplayDataUploadRequestInError "An exception happened during waiting for event to be signaled."
-				If((!$Remote.IsPresent) -or !($global:IsServerCore)){ Explorer.exe $global:Logfolder }
+				#If((!$Remote.IsPresent) -or !($global:IsServerCore)){ Explorer.exe $global:Logfolder }
 				CleanUpandExit
 			}
 		}Else{
@@ -11106,9 +10890,9 @@ Function ProcessCreateBatFile{
 	CreateStopCommandforBatch $LogCollector
 	LogInfo ("Batch file was created on $BatFileName.")
 	If(!$StartAutoLogger.IsPresent){
-		If((!$Remote.IsPresent) -or !($global:IsServerCore)){ Explorer.exe $global:LogFolder }
+		#If((!$Remote.IsPresent) -or !($global:IsServerCore)){ Explorer.exe $global:LogFolder }
 	}Else{
-		If((!$Remote.IsPresent) -or !($global:IsServerCore)){ Explorer.exe $AutoLoggerLogFolder }
+		#If((!$Remote.IsPresent) -or !($global:IsServerCore)){ Explorer.exe $AutoLoggerLogFolder }
 	}
 	EndFunc $MyInvocation.MyCommand.Name
 }
@@ -17861,8 +17645,6 @@ Try{
 Write-Host ""
 CleanUpandExit
 #endregion MAIN
-
-
 
 # SIG # Begin signature block
 # MIInrQYJKoZIhvcNAQcCoIInnjCCJ5oCAQExDzANBglghkgBZQMEAgEFADB5Bgor
