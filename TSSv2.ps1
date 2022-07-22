@@ -3,10 +3,11 @@
    Collect traces for several scenarios on Windows.
 
 .DESCRIPTION
-   Collect ETW/WPP traces for Windows components 
+   Collect HIVES/EVTX/ETW/WPP traces for Windows components 
    Also Netsh(packet capture)/Procmon/PerfMon/PSR/Video/SysMon/WPR/xPerf/TTD... can be taken at the same time.
    This script supports -StartAutoLogger for ETW traces and in addition to this, BootLogging
    including BootTrace(WPR), persistent=yes(Netsh) and /BootLogging(Procmon) are also supported.
+   Run 'Get-Help TSSv2.ps1 -full' for more detail.
 
 .EXAMPLE
 .\TSSv2.ps1 -CollectLog DND_CodeIntegrity,DND_PNP,DND_Servicing,DND_SETUP,DND_WinUpd,DND_WU,DND_WUlogs
