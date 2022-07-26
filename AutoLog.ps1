@@ -7,18 +7,18 @@
    Author     : Danilo Thome (danilog@microsoft.com)
    Requires   : PowerShell V4 (Supported from Windows 8.1/Windows Server 2012 R2)
 .LINK
-	LogCollector https://aka.ms/LogCollector
+	AutoLog https://aka.ms/AutoLog
 .PARAMETER CollectLog
 Collect logs for each component:
-      PS> .\LogCollector.ps1 -CollectLog Basic
+      PS> .\AutoLog.ps1 -CollectLog Basic
 #>
 
 [CmdletBinding(DefaultParameterSetName='Start')]
 Param (
 	[Parameter(ParameterSetName='CollectLog', Position=0)]
 	[String[]]$CollectLog,
-	[Switch]$NewSession,
-	[Switch]$RemoteRun = $True,
+	[Parameter(ParameterSetName='Help', Position=0)]
+	[Switch]$Help,
 #region ----- DND POD providers -----
 	[switch]$DND_CBS,
 	[switch]$DND_CodeIntegrity,
@@ -30,24 +30,14 @@ Param (
 	[Int]$DefenderDurInMin,
 #endregion ----- SEC POD providers -----
 	[switch]$DebugMode,
+	[Switch]$NewSession,
 	[switch]$AcceptEula = $True
+	[Switch]$RemoteRun = $True,
 )
 $global:TssVerDate = "2022.07.25.0"	# Plz. update if releasing a new POD module version TssVerDate<POD>
-$TraceSwitches = [Ordered]@{
-#region ----- DND POD description -----
-	'DND_CodeIntegrity' = 'CodeIntegrity tracing'
-	'DND_PNP' = 'PNP tracing'
-	'DND_Servicing' = 'DND servicing logs (CBS, DISM, PNP, WU) + procmon'
-	'DND_SETUP' = 'DND Setup log collection'
-	'DND_SETUPreport' = 'DND Setup Report log collection'
-	'DND_WinUpd' = 'DND_ collect Windows Update logs'
-	'DND_WU' = 'DND WU (Windows Update) tracing'
-	'DND_WUlogs' = 'DND Windows Update log collection'
-#endregion ----- DND POD description -----
-#region ----- SEC POD description -----
-	'SEC_Defender' = 'Collect Defender Get-Logs'
-	'SEC_DefenderFull' = 'Collect Full Defender tracing using MDEClientAnalyzer.ps1'
-#endregion ----- SEC POD description -----
+#region ----- SEC description -----
+	'Defender' = 'Collect Defender Get-Logs'
+#endregion ----- SEC description -----
 }
 # Create global variables for noSwitches
 $noSwitchList = ($NoOPTIONS.Keys | sort)
@@ -187,8 +177,8 @@ Function global:LogMessage{
 		}
 
 		# If this is from POD module, add the module name in front of the function name.
-		If($CallerInfo.ScriptName -notlike "*$global:ScriptName"){ # ScriptName = 'LogCollector.ps1'
-			$FuncName = (((Split-path $CallerInfo.ScriptName -leaf) -replace "LogCollector_","") + ":" + $FuncName)
+		If($CallerInfo.ScriptName -notlike "*$global:ScriptName"){ # ScriptName = 'AutoLog.ps1'
+			$FuncName = (((Split-path $CallerInfo.ScriptName -leaf) -replace "AutoLog_","") + ":" + $FuncName)
 		}
 		$LogMessage = ((Get-Date).ToString("yyyyMMdd HH:mm:ss.fff") + ' [' + $FuncName + '(' + $CallerInfo.ScriptLineNumber + ')]'+ " $Levelstr" + ": " + $Message)
 	}Else{
@@ -462,16 +452,16 @@ Function FwRunAdminCheck{
 			CleanUpandExit
 		}
 		If(!$noAsk.IsPresent){
-			# Issue#373 - LogCollector hang in ISE
-			$Answer = FwRead-Host-YN -Message "Do you want to re-run LogCollector from elevated PowerShell? (timeout=10s)" -Choices 'yn' -TimeOut 10
-			#CHOICE /T 10 /C yn /D y /M " Do you want to re-run LogCollector from elevated PowerShell?"
+			# Issue#373 - AutoLog hang in ISE
+			$Answer = FwRead-Host-YN -Message "Do you want to re-run AutoLog from elevated PowerShell? (timeout=10s)" -Choices 'yn' -TimeOut 10
+			#CHOICE /T 10 /C yn /D y /M " Do you want to re-run AutoLog from elevated PowerShell?"
 			If(!$Answer){
-				LogInfoFile "=== User declined to run LogCollector from elevated PowerShell ==="
+				LogInfoFile "=== User declined to run AutoLog from elevated PowerShell ==="
 				LogInfo "Run script from elevated command or PowerShell prompt" "Red"
 				CleanUpandExit
 			}
 		}
-		$cmdline = $Script:LogCollectorCommandline.Replace($MyInvocation.InvocationName,$MyInvocation.MyCommand.Path)
+		$cmdline = $Script:AutoLogCommandline.Replace($MyInvocation.InvocationName,$MyInvocation.MyCommand.Path)
 		Start-Process "PowerShell.exe" -ArgumentList " -noExit $cmdline" -Verb runAs	#fix #355
 		CleanUpandExit
 	}
@@ -662,7 +652,7 @@ Function global:FwNew-TemporaryFolder {
 	 Creates a temporary subfolder underneath $RelativeFolder; if parameter $RelativeFolder is empty it creates the folder in $Env:temp.
 	 This is useful for temporary folders, i.e. needed for $LogTTD 
 	.EXAMPLE
-	 FwNew-TemporaryFolder -RelativeFolder "%localappdata%\LogCollector"
+	 FwNew-TemporaryFolder -RelativeFolder "%localappdata%\AutoLog"
 	.PARAMETER RelativeFolder
 	 The full path to the top folder for the new temporary subfolder.
 	 #>
@@ -859,7 +849,7 @@ Function global:FwGetLogmanInfo {
 	EnterFunc ($MyInvocation.MyCommand.Name + " at $TssPhase")
 	LogInfoFile "[$($MyInvocation.MyCommand.Name)] running 'logman query -ets' at $TssPhase"
 	$outFile = $PrefixTime + "LogmanInfo" + $TssPhase + ".txt"
-	try {logman query -ets | Out-File -Append $outFile -Encoding ascii -Width 200; $TotProvCnt=$($(logman query -ets).count -5); "`nTotal # of Sessions: " + $TotProvCnt| Out-File -Append $outFile -Encoding ascii; if ($TotProvCnt -gt 55) {write-host -ForegroundColor red "[ERROR]: This data collection exceeds 55 ETL Trace Sessions, stop unnecessary ones.`nTo do so, stop current LogCollector, run 'Logman Query -ets', then: Logman stop -ets -n 'name of unrelated ETL session', then restart LogCollector"} } 
+	try {logman query -ets | Out-File -Append $outFile -Encoding ascii -Width 200; $TotProvCnt=$($(logman query -ets).count -5); "`nTotal # of Sessions: " + $TotProvCnt| Out-File -Append $outFile -Encoding ascii; if ($TotProvCnt -gt 55) {write-host -ForegroundColor red "[ERROR]: This data collection exceeds 55 ETL Trace Sessions, stop unnecessary ones.`nTo do so, stop current AutoLog, run 'Logman Query -ets', then: Logman stop -ets -n 'name of unrelated ETL session', then restart AutoLog"} } 
 	catch {Throw $error[0].Exception.Message; exit 1}
 	EndFunc $MyInvocation.MyCommand.Name
 }
@@ -1670,7 +1660,7 @@ Function global:FwExportEventLogWithTXTFormat{
 	 Folder name converted event log is stored.
 	.EXAMPLE
 		To export event with text format:
-		global:FwExportEventLogWithTXTFormat "Microsoft-Windows-TWinUI/Operational" "%localappdata%\LogCollector\XXX"
+		global:FwExportEventLogWithTXTFormat "Microsoft-Windows-TWinUI/Operational" "%localappdata%\AutoLog\XXX"
 	.NOTES
 		Date:   21.04.2021
 	#>
@@ -1764,12 +1754,12 @@ Function global:FwSetEventLog{
 		# Before enabling and changing the log settings, we remember all previous settings by copying registry.
 		Try {
 			# Save registry key for this event log.
-			If(!(Test-Path "$global:LogCollectorRegKey\EventLog")){
-				RunCommands "FwSetEventLog" "New-Item -Path `"$global:LogCollectorRegKey\EventLog`" -Force -ErrorAction Stop" -ThrowException:$True -ShowMessage:$False  -ShowError:$True
+			If(!(Test-Path "$global:AutoLogRegKey\EventLog")){
+				RunCommands "FwSetEventLog" "New-Item -Path `"$global:AutoLogRegKey\EventLog`" -Force -ErrorAction Stop" -ThrowException:$True -ShowMessage:$False  -ShowError:$True
 			}
 			
 			If(Test-Path -PathType Container "HKLM:\Software\Microsoft\Windows\CurrentVersion\WINEVT\Channels\$EventLogName"){
-				RunCommands "FwSetEventLog" "Copy-Item -Path `"HKLM:\Software\Microsoft\Windows\CurrentVersion\WINEVT\Channels\$EventLogName`" -Destination `"$global:LogCollectorRegKey\EventLog`" -ErrorAction Stop" -ThrowException:$True -ShowMessage:$False  -ShowError:$True
+				RunCommands "FwSetEventLog" "Copy-Item -Path `"HKLM:\Software\Microsoft\Windows\CurrentVersion\WINEVT\Channels\$EventLogName`" -Destination `"$global:AutoLogRegKey\EventLog`" -ErrorAction Stop" -ThrowException:$True -ShowMessage:$False  -ShowError:$True
 			}Else{
 				LogInfo "[FwSetEventLog] Registry for $EventLogName was not found."
 			}
@@ -1849,7 +1839,7 @@ Function global:FwResetEventLog{
 	.DESCRIPTION
 		Restores event log settings that was changed previously by FwSetEventLog()
 		global:FwResetEventLog expects 1 parameters: $EventLogName(Mandatory).
-		FwSetEventLog() saves previous event log setting to under "HKCU:\Software\Microsoft\LogCollector\EventLog" registry.
+		FwSetEventLog() saves previous event log setting to under "HKCU:\Software\Microsoft\AutoLog\EventLog" registry.
 		This function restores the settings by using the registry. If there is no registry, this function returns immediately.
 	.PARAMETER EventLogName
 		Array of event log name.
@@ -1869,7 +1859,7 @@ Function global:FwResetEventLog{
 	ForEach ($EventLogName in $EventLogNames){
 		LogDebug ("Restoring event log setting for $EventLogName")
 		Try{
-			$regKey = Get-Item "$global:LogCollectorRegKey\EventLog\$EventLogName" -ErrorAction Stop 
+			$regKey = Get-Item "$global:AutoLogRegKey\EventLog\$EventLogName" -ErrorAction Stop 
 		}Catch{
 			# It seems no change was made when SetEventLog. So just return.
 			LogInfo "FwResetEventLog was called but there was no saved setting data for $EventLogName."
@@ -1914,7 +1904,7 @@ Function global:FwResetEventLog{
 				Set-LogProperties -LogDetails $logDetails -Force | Out-Null
 				
 				# Remove the registry only for this event log.
-				Remove-Item -Path "$global:LogCollectorRegKey\EventLog\$EventLogName" -Recurse -ErrorAction Ignore | Out-Null 
+				Remove-Item -Path "$global:AutoLogRegKey\EventLog\$EventLogName" -Recurse -ErrorAction Ignore | Out-Null 
 			}Catch{
 				$ErrorMessage = '[ResetEventLog] ERROR: Encountered an error during restoring event log. Eventlog=' + $EventLogName + ' Command=' + $_.CategoryInfo.Activity + ' HResult=0x' + [Convert]::ToString($_.Exception.HResult,16) + ' Exception=' + $_.CategoryInfo.Reason
 				LogException $ErrorMessage $_ $fLogFileOnly
@@ -1924,9 +1914,9 @@ Function global:FwResetEventLog{
 			LogInfo "[FwResetEventLog] $EventLogName will be reset to Enabled=$Enabled and MaxSize=$MaxLogSize later"
 		}
 	}
-	# If there is no entries under 'EventLog' registry, delete the top 'LogCollector' registry
-	If((get-childitem "$global:LogCollectorRegKey\EventLog") -eq $Null){
-		Remove-Item -Path "$global:LogCollectorRegKey\EventLog" -Recurse -ErrorAction Ignore | Out-Null #we# commented in order to keep EulaAccepted, but now EULA is in "HKCU:Software\Microsoft\CESDiagnosticTools"
+	# If there is no entries under 'EventLog' registry, delete the top 'AutoLog' registry
+	If((get-childitem "$global:AutoLogRegKey\EventLog") -eq $Null){
+		Remove-Item -Path "$global:AutoLogRegKey\EventLog" -Recurse -ErrorAction Ignore | Out-Null #we# commented in order to keep EulaAccepted, but now EULA is in "HKCU:Software\Microsoft\CESDiagnosticTools"
 	}
 	EndFunc $MyInvocation.MyCommand.Name
 }
@@ -1934,9 +1924,9 @@ Function global:FwResetEventLog{
 Function global:FwResetAllEventLogs{
 	EnterFunc $MyInvocation.MyCommand.Name
 	LogDebug "Getting list of event logs to reset."
-	$EventLogNames = Get-ChildItem "$global:LogCollectorRegKey\EventLog" -ErrorAction Ignore
+	$EventLogNames = Get-ChildItem "$global:AutoLogRegKey\EventLog" -ErrorAction Ignore
 	If($EventLogNames.count -eq 0){
-		LogDebug "No event log in $global:LogCollectorRegKey"
+		LogDebug "No event log in $global:AutoLogRegKey"
 	}Else{
 		LogInfo "Resetting below event logs."
 		ForEach($EventLogName in $EventLogNames){
@@ -2067,7 +2057,7 @@ function global:FwDoCrash {
 			Return
 		}
 		LogInfo "[$($MyInvocation.MyCommand.Name)] ##### forcing a memory dump/crash now using '$global:NotMyFaultPath /crash' #####" "Magenta"
-		LogInfo "[$($MyInvocation.MyCommand.Name)] Please run command '$DirScript\LogCollector -stop -noCrash' after reboot and collect $env:SystemRoot\memory.dmp." "Magenta"
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Please run command '$DirScript\AutoLog -stop -noCrash' after reboot and collect $env:SystemRoot\memory.dmp." "Magenta"
 		$Commands = @(
 			"$global:NotMyFaultPath /AcceptEula /crash"
 		)
@@ -2599,6 +2589,362 @@ function global:FwGetWhoAmI {
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
+function Get-DNDDoLogs
+{
+    Param
+    (
+        [Alias("Prefix")]
+            [Parameter(Mandatory=$true, Position=0)]
+            [ValidateNotNullOrEmpty()]
+            [string] $_prefix,
+        [Alias("Temp")]
+            [Parameter(Mandatory=$false, Position=1)]
+            [string] $_tempdir=$null,
+        [Alias("RobocopyLog")]
+            [Parameter(Mandatory=$false, Position=2)]
+            [string] $_robocopy_log=$null,
+        [Alias("ErrorFile")]
+            [Parameter(Mandatory=$false, Position=3)]
+            [string] $_errorfile=$null,
+        [Alias("Line")]
+            [Parameter(Mandatory=$false, Position=4)]
+            [string] $_line=$null,
+        [Alias("FlushLogs")]
+            [Parameter(Mandatory=$false, Position=5)]
+            [string] $_flush_logs=$null
+    )
+    EnterFunc $MyInvocation.MyCommand.Name
+
+    # Section Delivery Optimizaton logs and powershell for Win10+
+    $LogPrefixDO = "DOSVC"
+    if ($null -ne (Get-Service -Name dosvc -ErrorAction SilentlyContinue)) {
+        if ($_FLUSH_LOGS -eq 1) {
+            LogInfo ("[$LogPrefixDO] Flushing DO/USO/WU logs.")
+            $CommandsFlushLogs = @(
+                "Stop-Service -Name dosvc"
+                "Stop-Service -Name usosvc"
+                "Stop-Service -Name wuauserv"
+            )
+			RunCommands $LogPrefixDO $CommandsFlushLogs -ThrowException:$False -ShowMessage:$True
+        }
+        FwCreateFolder $_tempdir\logs\DOSVC
+        LogInfo ("[$LogPrefixDO] Getting DeliveryOptimization logs.")
+        $CommandsDOSVC = @(
+            "robocopy `"$Env:windir\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Logs`" `"$_tempdir\logs\dosvc`" *.log *.etl /W:1 /R:1 /NP /LOG+:$_robocopy_log /S | Out-Null"
+            "robocopy `"$Env:windir\SoftwareDistribution\DeliveryOptimization\SavedLogs`" `"$_tempdir\logs\dosvc`" *.log *.etl /W:1 /R:1 /NP /LOG+:$_robocopy_log /S | Out-Null"
+        )
+        RunCommands $LogPrefixDO $CommandsDOSVC -ThrowException:$False -ShowMessage:$True
+        
+        LogInfo ("[$LogPrefixDO] Getting DeliveryOptimization registry.")
+        $RegKeysDOSVC = @(
+            ('HKLM:SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization')
+        )
+        FwExportRegToOneFile $LogPrefixDO $RegKeysDOSVC "$_tempdir\logs\dosvc\registry_DeliveryOptimization.txt"
+
+        LogInfo ("[$LogPrefixDO] Getting DeliveryOptimization perf data.")
+		$outfile = "$_tempdir\logs\dosvc\DeliveryOptimization_info.txt"
+		$Commands = @(
+			"Get-DeliveryOptimizationPerfSnap	| Out-File -Append $outfile"
+			"Get-DeliveryOptimizationStatus		| Out-File -Append $outfile"
+		)
+		RunCommands "MDT" $Commands -ThrowException:$False -ShowMessage:$True
+    }
+    EndFunc $MyInvocation.MyCommand.Name
+}
+
+function global:CollectWuLog {
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Is Running..."
+		EnterFunc $MyInvocation.MyCommand.Name
+		$_tempdir= "$LogFolder\WU_Logs$LogSuffix"
+		FwCreateLogFolder $_tempdir
+		$_prefix="$_tempdir\$Env:COMPUTERNAME" + "_"
+		$_robocopy_log=$_prefix+'robocopy.log'
+		$_errorfile= $_prefix+'Errorout.txt'
+		$_flush_logs=0
+		$_WUETLPATH="$Env:windir\Logs\WindowsUpdate"
+		$_SIHETLPATH="$Env:windir\Logs\SIH"
+		$_WUOLDETLPATH="$Env:windir.old\Windows\Logs\WindowsUpdate"
+		$_OLDPROGRAMDATA="$Env:windir.old\ProgramData"
+		$_robocopy_log="$_tempdir\robocopy.log"
+		$_OLDLOCALAPPDATA="$Env:windir.old\" + "$Env:localappdata".Substring(2)
+		$_major = [environment]::OSVersion.Version.Major
+		$_minor = [environment]::OSVersion.Version.Minor
+		$_build = [environment]::OSVersion.Version.Build
+		LogInfo ("[OS] Version: $_major.$_minor.$_build")
+		$_WIN8_OR_LATER = $false
+		$_WINBLUE_OR_LATER = $false
+		if ([int]$_major -ge 7)
+		{
+			$_WIN8_OR_LATER = $true
+			$_WINBLUE_OR_LATER = $true
+		}
+		elseif ([int]$_major -eq 6)
+		{
+			if([int]$_minor -ge 2) { $_WIN8_OR_LATER = $true}    
+			if([int]$_minor -ge 3) { $_WINBLUE_OR_LATER = $true}
+		}
+		FwGetSysInfo -Subfolder "WU_Logs$LogSuffix"
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Copying logs ..."
+		$SourceDestinationPaths = New-Object 'System.Collections.Generic.List[Object]'
+		$SourceDestinationPaths = @(
+			@("$Env:windir\windowsupdate.log", "$($_prefix)WindowsUpdate.log"),
+			@("$Env:windir\SoftwareDistribution\ReportingEvents.log", "$($_prefix)WindowsUpdate_ReportingEvents.log"),
+			@("$Env:localappdata\microsoft\windows\windowsupdate.log", "$($_prefix)WindowsUpdatePerUser.log"),
+			@("$Env:windir\windowsupdate (1).log", "$($_prefix)WindowsUpdate(1).log"),
+			@("$Env:windir.old\Windows\windowsupdate.log", "$($_prefix)Old.WindowsUpdate.log"),
+			@("$Env:windir.old\Windows\SoftwareDistribution\ReportingEvents.log", "$($_prefix)Old.ReportingEvents.log"),
+			@("$_OLDLOCALAPPDATA\microsoft\windows\windowsupdate.log", "$($_prefix)Old.WindowsUpdatePerUser.log"),
+			@("$Env:windir\SoftwareDistribution\Plugins\7D5F3CBA-03DB-4BE5-B4B36DBED19A6833\TokenRetrieval.log", "$($_prefix)WindowsUpdate_TokenRetrieval.log")
+		)
+		FwCopyFiles $SourceDestinationPaths -ShowMessage:$False
+		
+		# CBS & PNP logs
+		$Commands = @(
+			"robocopy.exe `"$Env:windir\logs\cbs`" 	$_tempdir *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log | Out-Null"
+			"robocopy.exe `"$Env:windir\logs\cbs`" 	$_tempdir *.cab /W:1 /R:1 /NP /LOG+:$_robocopy_log | Out-Null"
+			"robocopy.exe `"$Env:windir\logs\dpx`" 	$_tempdir *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log | Out-Null"
+			"robocopy.exe `"$Env:windir\inf`" 		$_tempdir *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log | Out-Null"
+			"robocopy.exe `"$Env:windir\WinSxS`" 	$_tempdir poqexec.log /W:1 /R:1 /NP /LOG+:$_robocopy_log | Out-Null"
+			"robocopy.exe `"$Env:windir\WinSxS`" 	$_tempdir pending.xml /W:1 /R:1 /NP /LOG+:$_robocopy_log | Out-Null"
+			"robocopy.exe `"$Env:windir\servicing\sessions`" $_tempdir sessions.xml /W:1 /R:1 /NP /LOG+:$_robocopy_log | Out-Null"
+		)
+		RunCommands "CBS_PNP" $Commands -ThrowException:$False -ShowMessage:$True
+				
+		# UUP logs and action list xmls
+		robocopy "$Env:windir\SoftwareDistribution\Download" "$_tempdir\UUP" *.log *.xml /W:1 /R:1 /NP /LOG+:$_robocopy_log
+		
+		# Windows Store logs.
+		cmd /r Copy "$Env:temp\winstore.log" "$_tempdir\winstore-Broker.log" /y >$null 2>&1
+		robocopy "$Env:userprofile\AppData\Local\Packages\WinStore_cw5n1h2txyewy\AC\Temp" "$_tempdir winstore.log" /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		
+		# Older build has ETL in windir
+		if (test-path -path "$Env:windir\windowsupdate.etl")
+		{
+		  # windowsupdate.etl is not flushed until service is stopped.
+		  $LogPrefixFlushLogs = "FlushLogs"
+		  LogInfo "[$($MyInvocation.MyCommand.Name)] Flushing USO/WU logs"
+		  $CommandsFlushLogs = @(
+			  "Stop-Service -Name usosvc"
+			  "Stop-Service -Name wuauserv"
+		  )
+		  RunCommands $LogPrefixFlushLogs $CommandsFlushLogs -ThrowException:$False -ShowMessage:$True
+		  robocopy "$Env:windir" $_tempdir windowsupdate.etl /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		}
+		
+		# Newer build has multiple ETLs
+		if (test-path -path $_WUETLPATH)
+		{
+			$LogPrefixFlushLogs = "FlushLogs"
+			LogInfo "[$($MyInvocation.MyCommand.Name)] Flushing USO/WU logs"
+			$CommandsFlushLogs = @(
+				"Stop-Service -Name usosvc"
+				"Stop-Service -Name wuauserv"
+			)
+			RunCommands $LogPrefixFlushLogs $CommandsFlushLogs -ThrowException:$False -ShowMessage:$True
+				
+			robocopy $_WUETLPATH $_tempdir *.etl /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		}
+	
+		# Copy SIH ETLs
+		if (test-path -path $_SIHETLPATH)
+		{
+			robocopy $_SIHETLPATH $_tempdir *.etl /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		}
+		
+		# Verbose Logging redirects WU ETL to systemdrive
+		if (test-path -path "$Env:systemdrive\windowsupdateverbose.etl")
+		{
+			# windowsupdateverbose.etl is not flushed until service is stopped.
+			$LogPrefixFlushLogs = "FlushLogs"
+			LogInfo "[$($MyInvocation.MyCommand.Name)] Flushing USO/WU logs"
+			$CommandsFlushLogs = @(
+				"Stop-Service -Name usosvc"
+				"Stop-Service -Name wuauserv"
+			)
+			RunCommands $LogPrefixFlushLogs $CommandsFlushLogs -ThrowException:$False -ShowMessage:$True
+			robocopy $Env:systemdrive $_tempdir windowsupdateverbose.etl /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		}
+			
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Copying upgrade logs"
+		cmd /r mkdir "$_tempdir\UpgradeSetup" >$null 2>&1
+		cmd /r mkdir "$_tempdir\UpgradeSetup\NewOS" >$null 2>&1
+		cmd /r mkdir "$_tempdir\UpgradeSetup\UpgradeAdvisor" >$null 2>&1
+		
+		robocopy "$Env:systemdrive\Windows10Upgrade" "$_tempdir\UpgradeSetup\UpgradeAdvisor" Upgrader_default.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy $Env:systemdrive\Windows10Upgrade "$_tempdir\UpgradeSetup\UpgradeAdvisor" Upgrader_win10.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy "$Env:systemdrive\$GetCurrent\logs" "$_tempdir\UpgradeSetup\UpgradeAdvisor" *.* /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy "$Env:windir\logs\mosetup" "$_tempdir\UpgradeSetup" *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		cmd /r Copy "$Env:windir.old\windows\logs\mosetup\*.log" "$_tempdir\UpgradeSetup\bluebox_windowsold.log" /y >$null 2>&1
+		robocopy "$Env:windir\Panther\NewOS" "$_tempdir\UpgradeSetup\NewOS" *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy "$Env:windir\Panther\NewOS" "$_tempdir\UpgradeSetup\NewOS" miglog.xml /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy "$Env:windir\Panther" "$_tempdir\UpgradeSetup" *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy "$Env:windir\Panther" "$_tempdir\UpgradeSetup" miglog.xml /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		cmd /r Copy "$Env:systemdrive\`$Windows.~BT\Sources\Panther\setupact.log" "$_tempdir\UpgradeSetup\setupact_tildabt.log" /y >$null 2>&1
+		cmd /r Copy "$Env:systemdrive\`$Windows.~BT\Sources\Panther\setuperr.log" "$_tempdir\UpgradeSetup\setuperr_tildabt.log" /y >$null 2>&1
+		cmd /r Copy "$Env:systemdrive\`$Windows.~BT\Sources\Panther\miglog.xml" "$_tempdir\UpgradeSetup\miglog_tildabt.xml" /y >$null 2>&1
+		if (test-path -path "$Env:systemdrive\`$Windows.~BT\Sources\Rollback")
+		{
+			robocopy "$Env:systemdrive\`$Windows.~BT\Sources\Rollback" "$_tempdir\UpgradeSetup\Rollback" /W:1 /R:1 /NP /LOG+:$_robocopy_log /S >$null
+		}
+		if (test-path -path "$Env:windir\Panther\NewOS")
+		{
+			robocopy "$Env:windir\Panther\NewOS" "$_tempdir\UpgradeSetup\PantherNewOS" /W:1 /R:1 /NP /LOG+:$_robocopy_log /S >$null
+		}
+		
+		# Copying the datastore file
+		if (test-path -path "$Env:windir\softwaredistribution\datastore\datastore.edb")
+		{
+		  Write-Output "Copying WU datastore ..."
+		  Stop-Service -Name usosvc >$null 2>&1
+		  Stop-Service -Name wuauserv >$null 2>&1
+		  robocopy "$Env:windir\softwaredistribution\datastore" $_tempdir DataStore.edb /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		}
+		
+		# Also copy ETLs pre-upgrade
+		if (test-path -path $_WUOLDETLPATH)
+		{
+		  robocopy $_WUOLDETLPATH "$_tempdir\Windows.old\WU" *.etl /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		}
+		
+		# Copy DISM Logs and DISM output
+		robocopy "$Env:windir\logs\dism" $_tempdir * /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		dism /online /get-packages /format:table > $_tempdir\DISM_GetPackages.txt
+		dism /online /get-features /format:table > $_tempdir\DISM_GetFeatures.txt
+		
+		# MUSE logs for Win10+
+		if($null -ne (Get-Service -Name usosvc -ErrorAction SilentlyContinue))
+		{
+		  LogInfo "[$($MyInvocation.MyCommand.Name)] Copying MUSE logs ..."
+		  Stop-Service -Name usosvc >$null 2>&1
+		  robocopy "$Env:programdata\UsoPrivate\UpdateStore" "$_tempdir\MUSE" /W:1 /R:1 /NP /LOG+:$_robocopy_log /S >$null
+		  robocopy "$Env:programdata\USOShared\Logs" "$_tempdir\MUSE" /W:1 /R:1 /NP /LOG+:$_robocopy_log /S >$null
+		  SCHTASKS /query /v /TN \Microsoft\Windows\UpdateOrchestrator\ > "$_tempdir\MUSE\updatetaskschedules.txt"
+		  robocopy "$_OLDPROGRAMDATA\USOPrivate\UpdateStore" "$_tempdir\Windows.old\MUSE" /W:1 /R:1 /NP /LOG+:$_robocopy_log /S >$null
+		  robocopy "$_OLDPROGRAMDATA%\USOShared\Logs" "$_tempdir\Windows.old\MUSE" /W:1 /R:1 /NP /LOG+:$_robocopy_log /S >$null
+		}
+		
+		# DO logs for Win10+
+		Get-DNDDoLogs $_prefix $_tempdir $_robocopy_log $_errorfile $_line $_flush_logs
+	
+		# WU BVT logs.
+		cmd /r mkdir $_tempdir\BVT >$null 2>&1
+		robocopy $Env:systemdrive\wubvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy $Env:systemdrive\dcatebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy $Env:systemdrive\wuappxebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy $Env:systemdrive\wuuxebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy $Env:systemdrive\wuauebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy $Env:systemdrive\WUE2ETest  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy $Env:systemdrive\taef\wubvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy $Env:systemdrive\taef\wuappxebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy $Env:systemdrive\taef\wuuxebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy $Env:systemdrive\taef\wuauebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy $Env:systemdrive\taef\WUE2ETest  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy $Env:systemdrive\taef\WUE2ETest  $_tempdir\BVT *.wtl /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Copying token cache and license store ..."
+		robocopy "$Env:windir\ServiceProfiles\LocalService\AppData\Local\Microsoft\WSLicense" $_tempdir tokens.dat /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		robocopy "$Env:windir\SoftwareDistribution\Plugins\7D5F3CBA-03DB-4BE5-B4B36DBED19A6833" $_tempdir 117CAB2D-82B1-4B5A-A08C-4D62DBEE7782.cache /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
+		
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Copying event logs ..."
+		cmd /r Copy "$Env:windir\System32\winevt\Logs\Microsoft-Windows-WindowsUpdateClient%4Operational.evtx" $_tempdir /y >$null 2>&1
+		cmd /r Copy "$Env:windir\System32\winevt\Logs\Microsoft-Windows-Bits-Client%4Operational.evtx" $_tempdir /y >$null 2>&1
+		cmd /r Copy "$Env:windir\System32\winevt\Logs\Application.evtx" $_tempdir /y >$null 2>&1
+		cmd /r Copy "$Env:windir\System32\winevt\Logs\System.evtx" $_tempdir /y >$null 2>&1
+		cmd /r Copy "$Env:windir\System32\Winevt\Logs\*AppX*.evtx" $_tempdir /y >$null 2>&1
+		cmd /r Copy "$Env:windir\System32\Winevt\Logs\Microsoft-WS-Licensing%4Admin.evtx"  $_tempdir /y >$null 2>&1
+		cmd /r Copy "$Env:windir\System32\winevt\Logs\Microsoft-Windows-Kernel-PnP%4Configuration.evtx" $_tempdir /y >$null 2>&1
+		cmd /r Copy "$Env:windir\System32\winevt\Logs\Microsoft-Windows-Store%4Operational.evtx" $_tempdir /y >$null 2>&1
+		
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Logging registry ..."
+		$RegKeysMiscInfoExport = @(
+			('HKLM:Software\Microsoft\Windows\CurrentVersion\WindowsUpdate', "$($_prefix)reg_wu.txt"),
+			('HKLM:Software\Microsoft\Windows\CurrentVersion\SideBySide\', "$($_prefix)reg_sidebyside.txt"),
+			('HKLM:Components\CorruptionDetectedDuringAcr', "$($_prefix)reg_comp_acr.txt"),
+			('HKLM:Software\Policies\Microsoft\Windows\WindowsUpdate', "$($_prefix)reg_wupolicy.txt"),
+			('HKLM:SYSTEM\CurrentControlSet\Control\MUI\UILanguages', "$($_prefix)reg_langpack.txt"),
+			('HKLM:Software\Policies\Microsoft\WindowsStore', "$($_prefix)reg_StorePolicy.txt"),
+			('HKLM:Software\Microsoft\Windows\CurrentVersion\WindowsStore\WindowsUpdate', "$($_prefix)reg_StoreWUApproval.txt"),
+			('HKLM:SYSTEM\CurrentControlSet\Control\FirmwareResources', "$($_prefix)reg_FirmwareResources.txt"),
+			('HKLM:Software\Microsoft\WindowsSelfhost', "$($_prefix)reg_WindowsSelfhost.txt"),
+			('HKLM:Software\Microsoft\WindowsUpdate', "$($_prefix)reg_wuhandlers.txt"),
+			('HKLM:Software\Microsoft\Windows\CurrentVersion\Appx', "$($_prefix)reg_appx.txt"),
+			('HKLM:Software\Microsoft\Windows NT\CurrentVersion\Superfetch', "$($_prefix)reg_superfetch.txt"),
+			('HKLM:Software\Setup', "$($_prefix)reg_Setup.txt"),
+			('HKCU:Software\Microsoft\Windows\CurrentVersion\Policies\WindowsUpdate', "$($_prefix)reg_peruser_wupolicy.txt"),
+			('HKLM:Software\Microsoft\PolicyManager\current\device\Update', "$($_prefix)reg_wupolicy_mdm.txt"),
+			('HKLM:Software\Microsoft\WindowsUpdate\UX\Settings', "$($_prefix)reg_wupolicy_ux.txt"),
+			('HKLM:Software\Microsoft\Windows\CurrentVersion\WaaSAssessment', "$($_prefix)reg_WaasAssessment.txt"),
+			('HKLM:Software\Microsoft\sih', "$($_prefix)reg_sih.txt")
+		)
+		FwExportRegistry "MiscInfo" $RegKeysMiscInfoExport -RealExport $true
+		
+		$RegKeysMiscInfoProperty = @(
+			('HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'BuildLab', "$($_prefix)reg_BuildInfo.txt"),
+			('HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'BuildLabEx', "$($_prefix)reg_BuildInfo.txt"),
+			('HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'UBR', "$($_prefix)reg_BuildInfo.txt"),
+			('HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'ProductName', "$($_prefix)reg_BuildInfo.txt"),
+			('HKLM:SOFTWARE\Microsoft\Windows\CurrentVersion\AppModel', 'Version', "$($_prefix)reg_AppModelVersion.txt")
+		)
+		FwExportRegistry "MiscInfo" $RegKeysMiscInfoProperty
+		
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Getting directory lists ..."
+		$Commands = @(
+			"cmd /r Dir $Env:windir\SoftwareDistribution /s  | Out-File -Append $($_prefix)dir_softwaredistribution.txt"
+			"cmd /r Dir $Env:windir\SoftwareDistribution /ah | Out-File -Append $($_prefix)dir_softwaredistribution_hidden.txt"
+		)
+		RunCommands "directory_lists" $Commands -ThrowException:$False -ShowMessage:$True
+		
+		Write-Output "Getting app list ..."
+		if ($_WIN8_OR_LATER -eq $true)    
+		{ 
+			try { Import-Module appx;get-appxpackage -allusers | Out-File -FilePath $_tempdir\GetAppxPackage.log }
+			catch { LogException "Get-Appxpackage failed" $_ }
+		}
+		if ($_WINBLUE_OR_LATER -eq $true) 
+		{ 
+			try { Get-Appxpackage -packagetype bundle | Out-File -FilePath $_tempdir\GetAppxPackageBundle.log }
+			catch { LogException "Get-Appxpackage failed" $_ }
+		}
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Getting download list ..."
+		bitsadmin /list /allusers /verbose > $_tempdir\bitsadmin.log
+		
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Getting certificate list ..."
+		certutil -store root > $_tempdir\certs.txt 2>&1
+		
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Getting installed update list ..."
+		$Commands = @(
+			"Get-CimInstance -ClassName win32_quickfixengineering | Out-File -Append $($_prefix)InstalledUpdates.log"
+			"sc.exe query wuauserv | Out-File -Append $($_prefix)wuauserv-state.txt"
+		)
+		RunCommands "installed_update" $Commands -ThrowException:$False -ShowMessage:$True
+		
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Collecting file versions ..."
+		
+		$binaries = @("wuaext.dll", "wuapi.dll", "wuaueng.dll", "wucltux.dll", "wudriver.dll", "wups.dll", "wups2.dll", "wusettingsprovider.dll", "wushareduxresources.dll", "wuwebv.dll", "wuapp.exe", "wuauclt.exe", "storewuauth.dll", "wuuhext.dll", "wuuhmobile.dll", "wuau.dll", "wuautoappupdate.dll")
+		foreach($file in $binaries)
+		{
+			FwFileVersion -Filepath ("$Env:windir\system32\$file") | Out-File -FilePath ($_prefix+"FilesVersion.txt") -Append
+		}
+	
+		$muis = @("wuapi.dll.mui", "wuaueng.dll.mui", "wucltux.dll.mui", "wusettingsprovider.dll.mui", "wushareduxresources.dll.mui")
+		foreach($file in $muis)
+		{
+			FwFileVersion -Filepath ("$Env:windir\system32\en-US\$file") | Out-File -FilePath ($_prefix+"FilesVersion.txt") -Append
+		}
+		
+		# end
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Restarting services ..."
+		$Commands = @(
+			"Start-Service -Name dosvc"
+			"Start-Service -Name usosvc"
+			"Start-Service -Name wuauserv"
+		)
+		RunCommands "Restart_services" $Commands -ThrowException:$False -ShowMessage:$True
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Finished DND_WUlogs!"
+		EndFunc $MyInvocation.MyCommand.Name
+}
+
+
 function global:CollectBasicLog {
 	param(
 		[ValidateNotNullOrEmpty()]
@@ -2625,7 +2971,6 @@ function global:CollectBasicLog {
 	}
 
 	FwGet-OSversion-Build
-	FwGet-SummaryVbsLog
 	FwGet-basic-system-info 
 	FWaddEvtLog @("System", "Application") #we# issue#405
 	FwGet-basic-setup-info
@@ -2682,7 +3027,6 @@ function global:CollectFullLog {
 	}
 
 	FwGet-OSversion-Build
-	FwGet-SummaryVbsLog -FullBasic
 	FwGet-basic-system-info -FullBasic
 	FWaddEvtLog @("System", "Application")
 	FwGet-basic-setup-info -FullBasic
@@ -2692,34 +3036,6 @@ function global:CollectFullLog {
 	FWgetRegList $global:TssPhase
 	FWgetEvtLogList $global:TssPhase
 	FwWaitForProcess $global:msinfo32NFO 300
-	EndFunc $MyInvocation.MyCommand.Name
-}
-
-Function global:FwGet-SummaryVbsLog{
-	param(
-		[String]$Stage=$Null,	# "Before-Repro|After-Repro"
-		[switch]$FullBasic,		# select -FullBasic to collect Full Basic data
-		[Parameter(Mandatory=$False)]
-		[String]$Subfolder
-	)
-	EnterFunc $MyInvocation.MyCommand.Name
-	if (!$global:IsLiteMode) { 
-		if ([string]::IsNullOrEmpty($Subfolder)) { $DestFolder = $BasicLogFolder} else { $DestFolder = $global:LogFolder + "\"  + $Subfolder}
-		If($FullBasic){ $B_mode="Full" }else{$B_mode="Basic"}
-		$LogPrefix = $B_mode + "Log-SummaryVbsLog"
-		If (Test-Path -Path "$Scriptfolder\psSDP\Diag\global\SummaryReliability.vbs") {
-			Try {
-				LogInfo "[$LogPrefix] .. running SummaryReliability.vbs"
-				Push-Location -Path $DestFolder
-				$CommandToExecute = "cscript.exe //e:vbscript $Scriptfolder\psSDP\Diag\global\SummaryReliability.vbs /sdp"
-				Invoke-Expression -Command $CommandToExecute | Out-Null
-			} Catch {
-				LogException "An Exception happend in SummaryReliability.vbs" $_
-			}
-			Pop-Location
-			#cd "$PSScriptRoot"
-		}Else{ LogInfo "[$LogPrefix] SummaryReliability.vbs not found - skipping"}
-	}else{ LogInfo "[$($MyInvocation.MyCommand.Name)] Skipping FwGet-SummaryVbsLog in Lite mode"}
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
@@ -3005,7 +3321,7 @@ Function global:FwGet-basic-networking-info{
 	)
 	EnterFunc $MyInvocation.MyCommand.Name
 	If($FullBasic){ $B_mode="Full" }else{$B_mode="Basic"}
-	$LogPrefix = $B_mode + "Log-NET"
+	$LogPrefix = $B_mode + "Log-Net"
 	#------- Networking --------#
 	# TCP/IP
 	LogInfo ("[$LogPrefix] Gathering networking info")
@@ -3173,7 +3489,7 @@ Function global:FwGet-basic-UEX-info{
 	)
 	EnterFunc $MyInvocation.MyCommand.Name
 	If($FullBasic){ $B_mode="Full" }else{$B_mode="Basic"}
-	$LogPrefix = $B_mode + "Log-UEX"
+	$LogPrefix = $B_mode + "Log-Ui"
 	#------- UEX --------#
 	LogInfo ("[$LogPrefix] Gathering UEX info")
 
@@ -3202,7 +3518,7 @@ Function global:FwGet-basic-Storage-info{
 	)
 	EnterFunc $MyInvocation.MyCommand.Name
 	If($FullBasic){ $B_mode="Full" }else{$B_mode="Basic"}
-	$LogPrefix = $B_mode + "Log-SHA"
+	$LogPrefix = $B_mode + "Log-Sto"
 	#------- Storage --------#
 	LogInfo ("[$LogPrefix] Gathering Storage info")
 	$Commands = @(
@@ -3266,7 +3582,6 @@ Function global:FwCollect_BasicLog{
 	}
 
 	FwGet-OSversion-Build
-	FwGet-SummaryVbsLog -FullBasic
 	FwGet-basic-system-info -FullBasic
 	FWaddEvtLog @("System", "Application")	#we# issue#405
 	FwGet-basic-setup-info -FullBasic
@@ -3310,7 +3625,6 @@ Function global:FwCollect_MiniBasicLog{
 	}
 
 	FwGet-OSversion-Build
-	FwGet-SummaryVbsLog
 	FwGet-basic-system-info 
 	FWaddEvtLog @("System", "Application") #we# issue#405
 	FwGet-basic-setup-info
@@ -3696,7 +4010,7 @@ Function global:FwCaptureUserDump{
 		$global:ProcDump = "Procdump.exe"
 		$ProcDumpCommand = Get-Command "Procdump.exe" -ErrorAction Ignore
 	  if ($ProcDumpCommand -ne $Null) {
-		  # For -Start, retrieve ProcDumpInterval from BoundParameters[] or config.cfg. For -Stop, $ProcDumpInterval are set in ReadParameterFromLogCollectorReg().
+		  # For -Start, retrieve ProcDumpInterval from BoundParameters[] or config.cfg. For -Stop, $ProcDumpInterval are set in ReadParameterFromAutoLogReg().
 		  If(!$Stop.IsPresent){
 			  #$ProcDumpInterval = $global:BoundParameters['ProcDumpInterval']
 			  If(!([string]::IsNullOrEmpty($global:BoundParameters['ProcDumpInterval']))){
@@ -4345,12 +4659,12 @@ Function SearchTTTracer{
 			$Script:UsePartnerTTD = $True
 			$fFound = $True
 		}
-	}Else{ # Search TTD shipped with LogCollector. If not exist, try to search built-in TTD.
+	}Else{ # Search TTD shipped with AutoLog. If not exist, try to search built-in TTD.
 		If($Global:ProcArch -eq 'x64'){
 			If($global:OSVersion.Build -le 9600){
 				$TTDFullPath = Join-Path -Path ".\BINx64\downlevel" "TTTracer.exe"
 			}Else{
-				$TTDFullPath = Join-Path -Path ".\BINx64" "TTTracer.exe"  # !!! the relative path might need to be updated once partner package is included in LogCollector and actual TTD path is determined.
+				$TTDFullPath = Join-Path -Path ".\BINx64" "TTTracer.exe"  # !!! the relative path might need to be updated once partner package is included in AutoLog and actual TTD path is determined.
 			}
 		}ElseIf($Global:ProcArch -eq 'x86'){
 			If($global:OSVersion.Build -le 9600){
@@ -4410,9 +4724,9 @@ Function CleanUpandExit{
 	}
 
 	# Delete outstanding job
-	$LogCollectorJob = Get-Job -Name "LogCollector-*"
-	If($LogCollectorJob -ne $Null){
-		$LogCollectorJob | Remove-Job
+	$AutoLogJob = Get-Job -Name "AutoLog-*"
+	If($AutoLogJob -ne $Null){
+		$AutoLogJob | Remove-Job
 	}
 
 	# Restoring DisableRegistryTools to original value. We do this if original value is other than 0(regedit is disabled by administrator).
@@ -4502,7 +4816,7 @@ Function ConvertScenarioTraceNametoTraceName{
 		Return $Null
 	}
 
-	$TraceName = $ScenarioTraceName -replace ".*Scenario_",""  # LogCollector_NET_BITSScenario_NET_BITSTrace => NET_BITSTrace
+	$TraceName = $ScenarioTraceName -replace ".*Scenario_",""  # AutoLog_NET_BITSScenario_NET_BITSTrace => NET_BITSTrace
 	$TraceName = $TraceName -replace "Trace$",""		  # NET_BITSTrace => NET_BITS
 	LogDebug "Returning with $TraceName"
 	Return $TraceName
@@ -4660,7 +4974,7 @@ Function IsServerCore{
 	Return $IsServerCore
 }
 
-Function SaveToLogCollectorReg{
+Function SaveToAutoLogReg{
 	Param(
 		[parameter(Mandatory=$true)]
 		[ValidateNotNullOrEmpty()]
@@ -4671,12 +4985,12 @@ Function SaveToLogCollectorReg{
 	)
 	EnterFunc $MyInvocation.MyCommand.Name
 
-	If(!(Test-Path $global:LogCollectorParamRegKey)){
-		LogInfo "Saving all parameters to $global:LogCollectorParamRegKey"
-		RunCommands "SaveToLogCollectorReg" "New-Item -Path `"$global:LogCollectorParamRegKey`" -Force -ErrorAction Stop" -ThrowException:$True -ShowMessage:$False  -ShowError:$True
+	If(!(Test-Path $global:AutoLogParamRegKey)){
+		LogInfo "Saving all parameters to $global:AutoLogParamRegKey"
+		RunCommands "SaveToAutoLogReg" "New-Item -Path `"$global:AutoLogParamRegKey`" -Force -ErrorAction Stop" -ThrowException:$True -ShowMessage:$False  -ShowError:$True
 	}
 
-	$LogCollectorReg = Get-ItemProperty -Path  $global:LogCollectorParamRegKey
+	$AutoLogReg = Get-ItemProperty -Path  $global:AutoLogParamRegKey
 	Switch ($RegData.GetType()){
 		'int'{
 			$PropertyType = "DWord"
@@ -4694,12 +5008,12 @@ Function SaveToLogCollectorReg{
 		}
 	}
 
-	LogInfoFile "Saving $RegValue($RegData) type=$($RegData.GetType()) to $($global:LogCollectorParamRegKey)"
+	LogInfoFile "Saving $RegValue($RegData) type=$($RegData.GetType()) to $($global:AutoLogParamRegKey)"
 	LogDebug "Saving -Name $RegValue -Value $RegData"
-	If($LogCollectorReg.$RegValue -ne $Null){ # Overwrite the value
-		Set-ItemProperty -Path $global:LogCollectorParamRegKey -Name $RegValue -Value $RegData
+	If($AutoLogReg.$RegValue -ne $Null){ # Overwrite the value
+		Set-ItemProperty -Path $global:AutoLogParamRegKey -Name $RegValue -Value $RegData
 	}Else{
-		New-ItemProperty -Path $global:LogCollectorParamRegKey -Name $RegValue -Value $RegData -PropertyType $PropertyType | Out-Null
+		New-ItemProperty -Path $global:AutoLogParamRegKey -Name $RegValue -Value $RegData -PropertyType $PropertyType | Out-Null
 	}
 	EndFunc $MyInvocation.MyCommand.Name
 }
@@ -4769,7 +5083,7 @@ Function global:FwDisplayPopUp{
 	.SYNOPSIS
 	  Displays a notification popup window for N seconds
 	.DESCRIPTION
-	  Function will display a PopUp window with [OK] button for duration of N seconds with title "LogCollector PowerShell ..." and closes after N seconds, then LogCollector script continues and requests input from user
+	  Function will display a PopUp window with [OK] button for duration of N seconds with title "AutoLog PowerShell ..." and closes after N seconds, then AutoLog script continues and requests input from user
 	.EXAMPLE
 	  FwDisplayPopUp 5 "[Topic is DFS]"
 	#>
@@ -4782,7 +5096,7 @@ Function global:FwDisplayPopUp{
 	EnterFunc $MyInvocation.MyCommand.Name
 	$newobject = New-Object -ComObject Wscript.Shell
 	#ToDo: place window .TopMost = $true
-	$PopUpWin = $newobject.popup("$Topic - Click OK and then Please answer TSS question ",$Timer ," LogCollector PowerShell window has a question for you! ($Timer sec display) ",0)
+	$PopUpWin = $newobject.popup("$Topic - Click OK and then Please answer TSS question ",$Timer ," AutoLog PowerShell window has a question for you! ($Timer sec display) ",0)
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
@@ -4948,7 +5262,7 @@ Function CreateETWTraceProperties{
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function AddTraceToLogCollector{
+Function AddTraceToAutoLog{
 	param(
 		[parameter(Mandatory=$true)]
 		[ValidateNotNullOrEmpty()]
@@ -4986,14 +5300,14 @@ Function AddTraceToLogCollector{
 		}
 
 		# Duplication check
-		$tmpObject = $LogCollector | Where-Object{$_.TraceName -eq $TraceObject.TraceName}
+		$tmpObject = $AutoLog | Where-Object{$_.TraceName -eq $TraceObject.TraceName}
 		If($tmpObject -ne $Null){
 			LogInfo "ERROR: Tried to start trace for $($TraceObject.TraceName) twice. Usually this happens when a scenario trace and a normal trace that is contained in the scenario are started at the same time. Please check what traces are contained in the scenario with below command." "Red"
 			LogInfo "=> .\$ScriptName -TraceInfo <ScenarioName>" "Yellow"
 			CleanUpandExit
 		}
 		LogDebug "Adding $($TraceObject.TraceName) to trace list"
-		$LogCollector.Add($TraceObject)
+		$AutoLog.Add($TraceObject)
 	}
 	EndFunc $MyInvocation.MyCommand.Name
 	Return
@@ -5362,7 +5676,7 @@ Function GetExistingTraceSession{
 					}
 					'Xperf' {
 						# We use a log file for xperf to see if the xperf is actively running.
-						$RegValue = Get-ItemProperty -Path  "$global:LogCollectorParamRegKey" -ErrorAction Ignore
+						$RegValue = Get-ItemProperty -Path  "$global:AutoLogParamRegKey" -ErrorAction Ignore
 						$LogFolderInReg = $RegValue.LogFolder
 						If(![String]::IsNullOrEmpty($LogFolderInReg)){
 							$XperfFileName = "$LogFolderInReg\xperf.etl"
@@ -5512,10 +5826,10 @@ Function GetRunningScenarioTrace{
 		$Token = $Line -Split '\s+'
 
 		If($Token[0] -like ("*Scenario_*")){ # Scenario trace
-			# Example: $ScenarioName="ADS_AUTH" $FullTraceName="LogCollector_ADS_AUTHScenario_ADS_XXXTrace" $TraceName=ADS_XXXTrace
-			$ScenarioToken = $Token[0] -Split 'Scenario_' # LogCollector_ADS_AUTHScenario_ADS_XXXTrace => LogCollector_ADS_AUTH , ADS_XXXTrace
-			$ScenarioName = $ScenarioToken[0] -replace (($ScriptPrefix + '_'),'') # LogCollector_ADS_AUTH => ADS_Auth
-			$FullTraceName = $Token[0] -replace ("Trace.*","Trace") # LogCollector_ADS_AUTHScenario_ADS_XXXTraceXXX => LogCollector_ADS_AUTHScenario_ADS_XXXTrace
+			# Example: $ScenarioName="ADS_AUTH" $FullTraceName="AutoLog_ADS_AUTHScenario_ADS_XXXTrace" $TraceName=ADS_XXXTrace
+			$ScenarioToken = $Token[0] -Split 'Scenario_' # AutoLog_ADS_AUTHScenario_ADS_XXXTrace => AutoLog_ADS_AUTH , ADS_XXXTrace
+			$ScenarioName = $ScenarioToken[0] -replace (($ScriptPrefix + '_'),'') # AutoLog_ADS_AUTH => ADS_Auth
+			$FullTraceName = $Token[0] -replace ("Trace.*","Trace") # AutoLog_ADS_AUTHScenario_ADS_XXXTraceXXX => AutoLog_ADS_AUTHScenario_ADS_XXXTrace
 			If($ScenarioToken[1].contains("METL")){
 				$Temp = $ScenarioToken[1] -Split '_'   
 				$TraceName = ($Temp[1] + '_' + $Temp[2] + 'Trace') # METL_NET_AfdTcpBasic_NetIoBasicTrace => NET_AfdTcpBasicTrace
@@ -5568,7 +5882,7 @@ Process of detecting enabled AutoLogger settings:
 1. Search registry keys that has our sign($Scriptprefix) from 'HKLM\System\CurrentControlSet\Control\WMI\AutoLogger'
 2. Firstly we will see if the key name has '_.*Scenario_.*' to get enabled AutoLogger for scenario trace.
 3. Scondly ,search with '_METL_.*' to get enabled AutoLogger for multiple etl file trace.
-4. After that, search normal ETW trace with '$ScriptPrifix_' which is currently 'LogCollector_'.
+4. After that, search normal ETW trace with '$ScriptPrifix_' which is currently 'AutoLog_'.
 5. In the step 2-4, we found all types of ETW traces enabled by this script. After that, we will find
    AutoLogger entries for other support tools like WPR, Netsh and Procmon.
 6. Return list of trace object that is enabled for AutoLogger.
@@ -5722,7 +6036,7 @@ Function CreateTraceObjectforScenarioTrace{
 		LogDebug "$ScenarioTraceName is not a scenario trace" "Yellow"
 		Return $Null
 	}
-	$tmpTraceName = $ScenarioTraceName -replace (".*Scenario_","") # LogCollector_testScenario_DEV_TEST1Trace => DEV_TEST1Trace
+	$tmpTraceName = $ScenarioTraceName -replace (".*Scenario_","") # AutoLog_testScenario_DEV_TEST1Trace => DEV_TEST1Trace
 	$TraceName = $tmpTraceName -replace ("Trace","") # DEV_TEST1Trace => DEV_TEST1
 	If($TraceName.Contains("METL")){ 
 		$TraceName = $TraceName -replace ("METL_","") # METL_DEV_TEST2_CertCli => # DEV_TEST2_CertCli
@@ -5766,15 +6080,15 @@ Function CreateTraceObjectforMultiETLTrace{
 
 	# Convert METL name to original normal trace name in order to retrieve trace object from global catalog later.
 	$TraceName = $Null
-	$tmpTraceName = $MultiETLTraceName -replace ".*METL_","LogCollector_" # LogCollector_METL_NET_TEST3_CertCliTrace => LogCollector_NET_TEST3_CertCliTrace
+	$tmpTraceName = $MultiETLTraceName -replace ".*METL_","AutoLog_" # AutoLog_METL_NET_TEST3_CertCliTrace => AutoLog_NET_TEST3_CertCliTrace
 	$Token = $tmpTraceName -split "_"
 	For($i=0; $i -lt $Token.Length-1; $i++){
 		If($i -ne 0){
 			$TraceName = $TraceName + '_'
 		}
-		$TraceName = $TraceName + $Token[$i]  # LogCollector_NET_TEST3_CertCliTrace => LogCollector_NET_TEST3
+		$TraceName = $TraceName + $Token[$i]  # AutoLog_NET_TEST3_CertCliTrace => AutoLog_NET_TEST3
 	}
-	$TraceName = $TraceName + 'Trace'  # LogCollector_NET_TEST3 => LogCollector_NET_TEST3Trace(Original trace name)
+	$TraceName = $TraceName + 'Trace'  # AutoLog_NET_TEST3 => AutoLog_NET_TEST3Trace(Original trace name)
 
 	# Get trace object for METL from catalog
 	$TraceObject = $GlobalTraceCatalog | Where-Object{$TraceName -eq $_.TraceName}
@@ -6003,8 +6317,8 @@ Function RunPreparation{
 	2. Created trace properties are added to $GlobalPropertyList which has all properties including other traces like WRP and Netsh.
 	3. Create trace objects based on $GlobalPropertyList 
 	4. Created TraceObjects are added to $GlobalTraceCatalog
-	5. Check argmuents and pick up TraceObjects specified in command line parameter and add them to $LogCollector(Generic.List)
-	6. StartTraces() starts all traces in $LogCollector(not $GlobalTraceCatalog). 
+	5. Check argmuents and pick up TraceObjects specified in command line parameter and add them to $AutoLog(Generic.List)
+	6. StartTraces() starts all traces in $AutoLog(not $GlobalTraceCatalog). 
 	#>
 	
 	# Creating properties for ETW trace and add them to ETWPropertyList
@@ -6076,7 +6390,7 @@ Function StartTraces{
 	$CreatedMETLTraceList = New-Object 'System.Collections.Generic.List[PSObject]'
 	$RemoveTraceList = New-Object 'System.Collections.Generic.List[PSObject]'
 
-	ForEach($TraceObject in $LogCollector)
+	ForEach($TraceObject in $AutoLog)
 	{
 		# Run pre-start function for a component.
 		$ComponentPreStartFunc = $TraceObject.Name + 'PreStart'
@@ -6142,7 +6456,7 @@ Function StartTraces{
 							If($CreatedMETLTraceObject -eq $Null){
 								$ShouldCreate = $True
 
-								# Create trace object and add it to LogCollector
+								# Create trace object and add it to AutoLog
 								$METLTraceObject = CreateTraceObjectforMultiETLTrace $TraceName
 								If($METLTraceObject -ne $Null){
 									LogDebug "Adding $($METLTraceObject.TraceName) to CreatedMETLTraceList"
@@ -6452,14 +6766,14 @@ Function StartTraces{
 
 	If($CreatedMETLTraceList.Count -ne 0){
 		ForEach($METLTraceObject in $CreatedMETLTraceList){
-			LogDebug "Adding $($METLTraceObject.TraceName) to LogCollector" Yellow
-			$LogCollector.Add($METLTraceObject)
+			LogDebug "Adding $($METLTraceObject.TraceName) to AutoLog" Yellow
+			$AutoLog.Add($METLTraceObject)
 		}
 	}
 	If($RemoveTraceList.Count -ne 0){
 		ForEach($RemoveTraceObject in $RemoveTraceList){
-			LogDebug "Removing $($RemoveTraceObject.TraceName) from LogCollector" Yellow
-			$LogCollector.Remove($RemoveTraceObject) | Out-Null
+			LogDebug "Removing $($RemoveTraceObject.TraceName) from AutoLog" Yellow
+			$AutoLog.Remove($RemoveTraceObject) | Out-Null
 		}
 	}
 
@@ -6525,10 +6839,10 @@ Function StopTraces{
 	EnterFunc $MyInvocation.MyCommand.Name
 	$global:TssPhase = "_Stop_"
 	# Change execution order based on 'StopPriority' in trace object
-	$SortedLogCollector = $TraceCollection | Sort-Object -Property StopPriority
+	$SortedAutoLog = $TraceCollection | Sort-Object -Property StopPriority
 	
 	# Remove and add trace object to original $TraceCollection with sorted order.
-	ForEach($TraceObject in $SortedLogCollector){
+	ForEach($TraceObject in $SortedAutoLog){
 		$TraceCollection.Remove($TraceObject) | Out-Null
 		$TraceCollection.Add($TraceObject)
 	}
@@ -6672,7 +6986,7 @@ Function StopTraces{
 					}
 					'Xperf' {
 						# We use a log file for xperf to see if the xperf is actively running.
-						$RegValue = Get-ItemProperty -Path  "$global:LogCollectorParamRegKey" -ErrorAction Ignore
+						$RegValue = Get-ItemProperty -Path  "$global:AutoLogParamRegKey" -ErrorAction Ignore
 						$LogFolderInReg = $RegValue.LogFolder
 						If(![String]::IsNullOrEmpty($LogFolderInReg)){
 							$XperfFileName = "$LogFolderInReg\xperf.etl"
@@ -6745,13 +7059,13 @@ Function StopTraces{
 				If(!$script:StopAutologger){
 					LogInfo "Stopping job $($TraceObject.Name)."
 					LogInfo "[$($TraceObject.Name)] Running $($TraceObject.CommandName) $($TraceObject.StopOption)"
-					Start-Job -Name ("LogCollector-" + $TraceObject.Name) -ScriptBlock {
+					Start-Job -Name ("AutoLog-" + $TraceObject.Name) -ScriptBlock {
 						Start-Process -FilePath $Using:TraceObject.CommandName -ArgumentList $Using:TraceObject.StopOption -PassThru -wait
 					} | Out-File -FilePath $global:ErrorLogFile -Append #we#| Out-Null
 				# AutoLogger case.
 				}Else{ 
 					LogInfo ('[' + $TraceObject.Name + '] Running ' + $TraceObject.CommandName + ' ' + $TraceObject.AutoLogger.AutoLoggerStopOption)
-					Start-Job -Name ("LogCollector-" + $TraceObject.Name) -ScriptBlock {
+					Start-Job -Name ("AutoLog-" + $TraceObject.Name) -ScriptBlock {
 						Start-Process -FilePath $Using:TraceObject.CommandName -ArgumentList $Using:TraceObject.AutoLogger.AutoLoggerStopOption -PassThru -wait
 					} | Out-Null
 
@@ -6878,7 +7192,7 @@ Function StopTraces{
 		}
 
 		# Run post-stop function for scenario trace that does have command type trace.
-		ForEach($ScenarioName in $Scenario){ # When -StartNoWait, $Scenario is set in ReadParameterFromLogCollectorReg().
+		ForEach($ScenarioName in $Scenario){ # When -StartNoWait, $Scenario is set in ReadParameterFromAutoLogReg().
 			# Fix(#222)
 			# If the scenario has command type trace like WPR and Netsh, the post-stop function for the scenario will be run after stopping all commands. #we# comment: this must not delay time-critical Post-Stop actions! better run your POD action in Collect...Log()
 			If((HasScenarioCommandTypeTrace $ScenarioName)){
@@ -7017,7 +7331,7 @@ Function StopTraces{
 		}else{ LogInfo " Skip data-collection .. early exit because of -Discard switch" "Magenta"}
 	}
 
-	$Jobs = Get-Job -Name "LogCollector-*"
+	$Jobs = Get-Job -Name "AutoLog-*"
 	If($Jobs.Count -ne 0){
 		LogInfo "Waiting for all running commands below to be stopped."
 		ForEach($Job in $Jobs){
@@ -7030,7 +7344,7 @@ Function StopTraces{
 	$CheckIntervalInSec = 1
 	While($Jobs.Count -ne 0){
 		$LoopCount++
-		$Jobs = Get-Job -Name "LogCollector-*"
+		$Jobs = Get-Job -Name "AutoLog-*"
 		If($Jobs -eq $Null){ # All job are finished and get out of while loop.
 			Break
 		}
@@ -7039,7 +7353,7 @@ Function StopTraces{
 		Start-Sleep $CheckIntervalInSec
 
 		ForEach($Job in $Jobs){
-			$CommandName = $Job.Name -replace ("LogCollector-","")
+			$CommandName = $Job.Name -replace ("AutoLog-","")
 			$TraceObject = $TraceCollection | Where-Object {$_.Name -eq $CommandName}
 			$JobFinished = $False
 
@@ -7142,9 +7456,9 @@ Function StopTraces{
 		UnRegisterPurgeTask
 	}
 
-	# Remove script parameters in LogCollectorRegKey.
+	# Remove script parameters in AutoLogRegKey.
 	If(!$Script:IsCrashInProgress){
-		RemoveParameterFromLogCollectorReg
+		RemoveParameterFromAutoLogReg
 	}
 
 	# Run psSDP here.
@@ -7252,8 +7566,8 @@ Function RemoveAutoLogger{
 	# Unregister a purge task in task scheduler if it exists.
 	UnRegisterPurgeTask
 
-	# Remove script parameters in LogCollector registry as no longer needed.
-	RemoveParameterFromLogCollectorReg
+	# Remove script parameters in AutoLog registry as no longer needed.
+	RemoveParameterFromAutoLogReg
 
 	EndFunc $MyInvocation.MyCommand.Name
 }
@@ -7397,7 +7711,7 @@ Function CompressLogIfNeededAndShow{
 
 		# 5. Before compressing log folder, close transcript.
 		$TimeUTC = $((Get-Date).ToUniversalTime().ToString("yyyy-MM-dd_HH:mm:ss"))
-		LogInfoFile "=========== End of LogCollector Data collection: $TimeUTC UTC ==========="
+		LogInfoFile "=========== End of AutoLog Data collection: $TimeUTC UTC ==========="
 		Close-Transcript -ShowMsg
 
 		# 6. Records all errors in $Error variable.
@@ -7470,7 +7784,7 @@ Function CompressLogIfNeededAndShow{
 			LogInfo "Please compress $global:LogFolder manually and send it to MS workspace upload site." "Cyan"
 		}
 		$TimeUTC = $((Get-Date).ToUniversalTime().ToString("yyyy-MM-dd_HH:mm:ss"))
-		LogInfoFile "=========== End of LogCollector Data collection: $TimeUTC UTC ==========="
+		LogInfoFile "=========== End of AutoLog Data collection: $TimeUTC UTC ==========="
 		If((!$RemoteRun.IsPresent) -and !($global:IsServerCore)){ Explorer.exe $global:LogFolder }
 	}
 
@@ -7609,7 +7923,6 @@ Function ProcessCollectLog{
 	LogInfoFile "======================== Start of Collect ========================"
 	
 	$RequestedLogs = $CollectLog -Split '\s+'
-	$i=0
 
 	if (("Basic" -notin ($RequestedLogs)) -and ("Full" -notin ($RequestedLogs))){
 		CollectBasicLog
@@ -7622,11 +7935,8 @@ Function ProcessCollectLog{
 
 		If($Commandobj -ne $Null){
 			Try{
-				$i++
-				If(!$global:BoundParameters.ContainsKey('Discard')){
-					LogInfo "[$($MyInvocation.MyCommand.Name)] Calling log collection function ($ComponentLogCollectionFunc)"
-					& $ComponentLogCollectionFunc
-				}
+				LogInfo "[$($MyInvocation.MyCommand.Name)] Calling log collection function ($ComponentLogCollectionFunc)"
+				& $ComponentLogCollectionFunc
 			}Catch{
 				LogWarn ("Exception happened in $ComponentLogCollectionFunc.")
 				LogException ("An error happened in $ComponentLogCollectionFunc") $_ $fLogFileOnly
@@ -7745,15 +8055,19 @@ Function ProcessTraceInfo{
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function ProcessFindKeyword{
-	# calling ProcessHelp() with <keyword> or 0-9. Numbers 0-9 will invoke the corresponding Help-Menue items
-	# It also works with regular expressions like "reg.*path"
+Function ProcessHelp{
 	EnterFunc $MyInvocation.MyCommand.Name
 	Try{
-		ProcessHelp -SkipMenu -Ans $Find # This creates help-text files
-
+		Write-Output "-Usage:"
+		Write-Output "-------------------------------------------------------------------------------------------------------------------------"
+		Write-Output ".\AutoLog.ps1 -CollectLog Basic                                       - Collect basic logs"
+		Write-Output ".\AutoLog.ps1 -CollectLog Full                                        - Collect full additional logs"
+		Write-Output ".\AutoLog.ps1 -CollectLog Basic,Wu                                    - Collect basic logs and Windows Update logs"
+		Write-Output ".\AutoLog.ps1 -CollectLog Defender                                    - Collect basic logs and Windows Update logs"
+		Write-Output ".\AutoLog.ps1 -CollectLog Defender -DefenderDurinMin <int in minutes> - Collect basic logs and Windows Update logs"
+		Write-Output "-------------------------------------------------------------------------------------------------------------------------"
 	}Catch{
-		LogException "[ProcessFindKeyword] An exception happened in ProcessHelp." $_
+		LogInfo "[$($MyInvocation.MyCommand.Name)] An exception happened in ProcessHelp"
 		CleanUpandExit
 	}
 	EndFunc $MyInvocation.MyCommand.Name
@@ -7824,7 +8138,7 @@ Function CreateStartCommandforBatch{
 	EnterFunc $MyInvocation.MyCommand.Name
 
 	If($TraceObjectList -eq $Null){
-		LogError"There is no trace in LogCollector."
+		LogError"There is no trace in AutoLog."
 		retrun
 	}
 
@@ -7986,7 +8300,7 @@ Function FixUpNetshProperty{
 	# Issue#321
 	# Adjust parameter in case of Server Core
 	If($global:IsServerCore){
-		LogInfo "LogCollector is running on Server Core and adjusting netsh parameters"
+		LogInfo "AutoLog is running on Server Core and adjusting netsh parameters"
 		# SrvCORE does not work with trace scenario=InternetClient_dbg etc. Hence, replace original scenario name with 'InternetServer'
 		If($global:BoundParameters.ContainsKey('NetshScenario')){
 			$ScenarioNames = $global:BoundParameters['NetshScenario']
@@ -8294,7 +8608,7 @@ Function FixUpProcmonProperty{
 
 	$ProcmonCommand = Get-Command $ProcmonProperty.CommandName -ErrorAction Ignore
 	If($ProcmonCommand -eq $Null){
-		LogErrorFile "Procmon.exe not found."  # Procmon will be removed from LogCollector later. So just log it to log file.
+		LogErrorFile "Procmon.exe not found."  # Procmon will be removed from AutoLog later. So just log it to log file.
 		Return
 	}
 
@@ -8385,7 +8699,7 @@ Function FixUpPerfProperty{
 		LogInfo " ..collecting registry hives for troubleshooting this PerfMon issue"
 		FwGetRegHives _Stop_
 		LogInfo "=> Please check $global:ErrorLogFile" "Magenta"
-		LogInfo "`nTo avoid this error, run LogCollector again with appended switch -noPerfmon" "Cyan"
+		LogInfo "`nTo avoid this error, run AutoLog again with appended switch -noPerfmon" "Cyan"
 		CleanUpandExit
 	}
 	EndFunc $MyInvocation.MyCommand.Name
@@ -8455,7 +8769,7 @@ Function ProcessStart{
 		#}
 	}
 
-	# Checking trace and command switches and add them to LogCollector.
+	# Checking trace and command switches and add them to AutoLog.
 	ForEach($RequestedTraceName in $global:BoundParameters.Keys){
 		If($ControlSwitches -Contains $RequestedTraceName){  # additional params, like EtlOptions should be added to $ControlSwitches
 			Continue # This is not switch for trace.
@@ -8465,13 +8779,13 @@ Function ProcessStart{
 			$RequestedTraceName = 'Netsh' # NetshScenario uses Netsh object. So replace the name.
 		}
 		If($StartAutoLogger.IsPresent){
-			# Only AutoLogger supported traces are added to LogCollector
+			# Only AutoLogger supported traces are added to AutoLog
 			If($RequestedTraceName.Contains('Scenario')){
 				$TraceName = ConvertScenarioTraceNametoTraceName $RequestedTraceName
 				If($TraceName -ne $Null){
 					$AutoLoggerTraceObject = $GlobalTraceCatalog | Where-Object{($_.AutoLogger -ne $Null) -and ($TraceName -eq $_.Name)}
 					If($AutoLoggerTraceObject -ne $Null){
-						AddTraceToLogCollector $RequestedTraceName
+						AddTraceToAutoLog $RequestedTraceName
 					}
 				}Else{
 					LogError "Unable to convert to a trace from `'$RequestedTraceName`'"
@@ -8480,64 +8794,64 @@ Function ProcessStart{
 			}Else{ # Normal Trace
 				$AutoLoggerTraceObject =  $GlobalTraceCatalog | Where-Object{$_.AutoLogger -ne $Null -and ($RequestedTraceName -eq $_.Name)}
 				If($AutoLoggerTraceObject -ne $Null){ # This trace has AutoLogger
-					AddTraceToLogCollector $RequestedTraceName
+					AddTraceToAutoLog $RequestedTraceName
 				}Else{
-					LogDebug "Skipping adding $RequestedTraceName to LogCollector"
+					LogDebug "Skipping adding $RequestedTraceName to AutoLog"
 				}
 			}
 		}Else{
 			# If not AutoLogger, just add all traces which are specified in option.
-			AddTraceToLogCollector $RequestedTraceName
+			AddTraceToAutoLog $RequestedTraceName
 		}
 	}
 
 	# Change execution order based on 'Priority' in trace object
-	$SortedLogCollector = $LogCollector | Sort-Object -Property StartPriority
+	$SortedAutoLog = $AutoLog | Sort-Object -Property StartPriority
 	
-	# Remove and add trace object to original $LogCollector with sorted order.
-	ForEach($TraceObject in $SortedLogCollector){
-		$LogCollector.Remove($TraceObject) | Out-Null
-		$LogCollector.Add($TraceObject)
+	# Remove and add trace object to original $AutoLog with sorted order.
+	ForEach($TraceObject in $SortedAutoLog){
+		$AutoLog.Remove($TraceObject) | Out-Null
+		$AutoLog.Add($TraceObject)
 	}
 
-	# Now we have $LogCollector and check if it meets the requirements
+	# Now we have $AutoLog and check if it meets the requirements
 	If($global:ParameterArray -notcontains 'noPrereqC'){
 		PreRequisiteCheckForStart
 	}Else{
 		LogInfo "Skipping PreRequisiteCheckForStart() as -noPrereqC was specified."
 	}
 
-	# Store scenario name to LogCollector registry in case of -StartNoWait/-StartAutoLogger
+	# Store scenario name to AutoLog registry in case of -StartNoWait/-StartAutoLogger
 	If(($global:ParameterArray -contains 'StartNoWait' -or $global:ParameterArray -contains 'StartAutoLogger') -and ($Scenario.Count -ne 0)){
 		ForEach($ScenarioName in $Scenario){
 			$ScenarioString = $ScenarioName + ','
 		}
 		$ScenarioString = $ScenarioString -replace ",$",""
 
-		If(!(Test-Path $global:LogCollectorParamRegKey)){
-			RunCommands "ProcessStart" "New-Item -Path `"$global:LogCollectorParamRegKey`" -Force -ErrorAction Stop" -ThrowException:$True -ShowMessage:$True  -ShowError:$True
+		If(!(Test-Path $global:AutoLogParamRegKey)){
+			RunCommands "ProcessStart" "New-Item -Path `"$global:AutoLogParamRegKey`" -Force -ErrorAction Stop" -ThrowException:$True -ShowMessage:$True  -ShowError:$True
 		}
 		$ValueName = 'Scenario'
-		$RegValues = Get-ItemProperty -Path  $global:LogCollectorParamRegKey
-		LogInfo "Saving scenario name(Scenario) to $global:LogCollectorParamRegKey\$ValueName"
+		$RegValues = Get-ItemProperty -Path  $global:AutoLogParamRegKey
+		LogInfo "Saving scenario name(Scenario) to $global:AutoLogParamRegKey\$ValueName"
 		If($RegValues.$ValueName -ne $Null){ # Overwrite the value
-			Set-ItemProperty -Path $global:LogCollectorParamRegKey -Name $ValueName -Value $ScenarioString
+			Set-ItemProperty -Path $global:AutoLogParamRegKey -Name $ValueName -Value $ScenarioString
 		}Else{
-			New-ItemProperty -Path $global:LogCollectorParamRegKey -Name $ValueName -PropertyType String  -Value $ScenarioString | Out-Null
+			New-ItemProperty -Path $global:AutoLogParamRegKey -Name $ValueName -PropertyType String  -Value $ScenarioString | Out-Null
 		}
 	}
 
 	If($DebugMode.IsPresent){
 		LogDebug ("Pri TraceName")
 		LogDebug ("--- -------------------------")
-		ForEach($TraceObject in $LogCollector){
+		ForEach($TraceObject in $AutoLog){
 			LogDebug (" $($TraceObject.StartPriority)  $($TraceObject.TraceName)")
 		}
 		LogDebug ("--- -------------------------")
 	}
 
 	Write-Host "Processing below traces:"
-	ForEach($TraceObject in $LogCollector){
+	ForEach($TraceObject in $AutoLog){
 		If($StartAutoLogger.IsPresent -and $TraceObject.LogType -eq 'ETW'){
 			Write-Host ('	- ' + $TraceObject.AutoLogger.AutoLoggerSessionName + ' with ' + $TraceObject.Providers.Count + ' providers')
 		}ElseIf($TraceObject.LogType -eq 'ETW'){	 
@@ -8562,7 +8876,7 @@ Function ProcessStart{
 	}
 	Write-Host ""
 	If($DebugMode.IsPresent){
-		DumpCollection $LogCollector
+		DumpCollection $AutoLog
 		Read-Host ("[DBG - hit ENTER to continue] (Before StartTraces) ==>")
 	}
 
@@ -8583,9 +8897,9 @@ Function ProcessStart{
 		LogException ('An error happened in StartTraces') $_
 		LogWarn ('Starting recovery process...')
 
-		# As some of detection functions rely on LogCollector registry, we save script parameters to LogCollector reg 
+		# As some of detection functions rely on AutoLog registry, we save script parameters to AutoLog reg 
 		# before running the detection functions called from GetExistingTraceSession.
-		SaveParameterToLogCollectorReg
+		SaveParameterToAutoLogReg
 
 		$RunningTraces = GetExistingTraceSession
 		If($RunningTraces.Count -ne 0){
@@ -8616,13 +8930,13 @@ Function ProcessStart{
 	}
 	# -StartAutoLogger
 	If($StartAutoLogger.IsPresent){
-		ShowTraceResult $LogCollector 'Start' -fAutoLogger:$True
+		ShowTraceResult $AutoLog 'Start' -fAutoLogger:$True
 		LogInfo "The trace will be started from next boot. Run `'Restart-Computer`' to take the change effect."
-		LogInfo "To stop datacollection after boot, run .\LogCollector.ps1 -Stop" "Cyan"
+		LogInfo "To stop datacollection after boot, run .\AutoLog.ps1 -Stop" "Cyan"
 		If($ProcmonPath -ne $Null -and $ProcmonPath -ne ''){
 			Write-Host ("==> Run `'" + ".\$ScriptName -Stop -ProcmonPath $ProcmonPath" + "`' to stop AutoLogger after next boot.") -ForegroundColor Yellow
 		}
-		SaveParameterToLogCollectorReg
+		SaveParameterToAutoLogReg
 		CleanUpandExit
 	# -Start and -StartNoWait
 	}ElseIf($StartNoWait.IsPresent){
@@ -8634,19 +8948,19 @@ Function ProcessStart{
 			$StopMessage = $StopMessage + " -CommonTask $CommonTask"
 		}
 		Write-Host $StopMessage -ForegroundColor Yellow
-		# At the last, saving script parameters to LogCollector registry
-		SaveParameterToLogCollectorReg
+		# At the last, saving script parameters to AutoLog registry
+		SaveParameterToAutoLogReg
 		CleanUpandExit
 	}
 	# -Start
 	Else{
-		SaveParameterToLogCollectorReg
+		SaveParameterToAutoLogReg
 		If(!([string]::IsNullOrEmpty($WaitEvent)) -or $FwIsMonitoringEnabledByConfigFile){
 			Try{
 				WaitForMultipleEvents
 				If($script:FWRuleArray.Count -ne 0){
 					ForEach($FWRule in $script:FWRuleArray){
-						LogInfo "Disabling Firewall rule($($FWRule.Displayname)) setting as LogCollector enabled it temporary."
+						LogInfo "Disabling Firewall rule($($FWRule.Displayname)) setting as AutoLog enabled it temporary."
 						$FWRule | Set-NetFirewallRule -Enabled False
 					}
 					$script:FWRuleArray = $Null
@@ -8680,7 +8994,7 @@ Function ProcessStart{
 			LogInfoFile "============= Start of Repro: $TimeUTC UTC ============"
 			If($global:BoundParameters.ContainsKey('Crash') -and !$global:BoundParameters.ContainsKey('noCrash')) {LogWarn "** Will Force Crash at stop: see KB969028 https://support.microsoft.com/en-US/help/969028" "Cyan" }
 			LogInfo	    "============= Start of Repro: $TimeUTC UTC ============" "Green"
-			# Issue#373 - LogCollector hang in ISE
+			# Issue#373 - AutoLog hang in ISE
 			FwRead-Host-YN -Message "Reproduce the issue and enter 'Y' key AFTER finishing the repro (with window focus here)" -Choices 'y' | Out-Null  # no interest in answer
 			#Read-Host('Reproduce the issue and enter RETURN key AFTER finishing the repro (with window focus here)')
 			#CHOICE /C "y" /M "Reproduce the issue and enter 'Y' key AFTER finishing the repro (with window focus here) " 
@@ -8688,8 +9002,8 @@ Function ProcessStart{
 			LogInfoFile "============= End of Repro:   $TimeUTC UTC ============"
 			LogInfo	    "============= End of Repro:   $TimeUTC UTC ============" "Green"
 		}
-		StopTraces $LogCollector
-		ShowTraceResult $LogCollector 'Stop' -fAutoLogger:$False
+		StopTraces $AutoLog
+		ShowTraceResult $AutoLog 'Stop' -fAutoLogger:$False
 		CompressLogIfNeededAndShow
 		CleanUpandExit
 	}
@@ -8833,7 +9147,7 @@ Function ProcessStop{
 			FwCopyMemoryDump -DaysBack 2
 			CompressLogIfNeededAndShow
 		}
-		RemoveParameterFromLogCollectorReg
+		RemoveParameterFromAutoLogReg
 		CleanUpandExit
 	}
 
@@ -8863,7 +9177,7 @@ Function ProcessSet{
 		Write-Host ('ERROR: -Set ' + $Set + ' is invalid.') -ForegroundColor Red
 		Write-Host ('Supported options are:')
 		ForEach($Key in $SupportedSetOptions.Keys){
-			Write-Host ('	o .\LogCollector.ps1 -Set ' + $Key + '   /// ' + $SupportedSetOptions[$Key])
+			Write-Host ('	o .\AutoLog.ps1 -Set ' + $Key + '   /// ' + $SupportedSetOptions[$Key])
 		}
 		CleanUpandExit
 	}
@@ -8890,7 +9204,7 @@ Function ProcessUnset{
 		Write-Host ('ERROR: -Unset ' + $Unset + ' is invalid.') -ForegroundColor Red
 		Write-Host ('Supported options are:')
 		ForEach($Key in $SupportedSetOptions.Keys){
-			Write-Host ('	o .\LogCollector.ps1 -Unset ' + $Key)
+			Write-Host ('	o .\AutoLog.ps1 -Unset ' + $Key)
 		}
 		CleanUpandExit
 	}
@@ -9002,7 +9316,7 @@ Function ProcessCreateBatFile{
 	}
 
 	$TraceSwitcheCount=0
-	# Checking trace and command switches and add them to LogCollector.
+	# Checking trace and command switches and add them to AutoLog.
 	ForEach($RequestedTraceName in $global:ParameterArray){
 	
 		If($ControlSwitches.Contains($RequestedTraceName)){
@@ -9016,29 +9330,29 @@ Function ProcessCreateBatFile{
 			$RequestedTraceName = 'Netsh' # NetshScenario uses Netsh object. So replace the name.
 		}
 		If($StartAutoLogger.IsPresent){
-			# Only AutoLogger supported traces are added to LogCollector
+			# Only AutoLogger supported traces are added to AutoLog
 			$AllAutoLoggerSupportedTraces =  $GlobalTraceCatalog | Where-Object{$_.AutoLogger -ne $Null}
 			If($AllAutoLoggerSupportedTraces -eq $Null){
 				Continue
 			}
 			$AutoLoggerSupportedTrace = $AllAutoLoggerSupportedTraces | Where-Object{$_.Name -eq $RequestedTraceName}
 			If($AutoLoggerSupportedTrace -ne $Null){ # This trace has AutoLogger
-				AddTraceToLogCollector $RequestedTraceName
+				AddTraceToAutoLog $RequestedTraceName
 			}
 		}Else{
 			# If not AutoLogger, just add all traces which are specified in option.
-			AddTraceToLogCollector $RequestedTraceName
+			AddTraceToAutoLog $RequestedTraceName
 		}
 	}
 	
 	# Check collection
-	If($LogCollector.Count -eq 0){
-		LogError ('LogCollector is null.')
+	If($AutoLog.Count -eq 0){
+		LogError ('AutoLog is null.')
 		CleanUpandExit
 	}
 
-	CreateStartCommandforBatch $LogCollector
-	CreateStopCommandforBatch $LogCollector
+	CreateStartCommandforBatch $AutoLog
+	CreateStopCommandforBatch $AutoLog
 	LogInfo ("Batch file was created on $BatFileName.")
 	If(!$StartAutoLogger.IsPresent){
 		If((!$RemoteRun.IsPresent) -and !($global:IsServerCore)){ Explorer.exe $global:LogFolder }
@@ -9093,7 +9407,7 @@ Function ProcessCollectEventLog{
 Function UpdateTSS{
 	EnterFunc $MyInvocation.MyCommand.Name
 	If(Test-Path -Path "$Scriptfolder\scripts\tss_update-script.ps1"){
-		LogInfo "[update] LogCollector update starting..." green
+		LogInfo "[update] AutoLog update starting..." green
 		Push-Location -Path ".\scripts"
 		Try{
 			.\tss_update-script.ps1 -tss_action update -UpdMode $UpdMode -verOnline $Script:TssVerOnline
@@ -9101,7 +9415,7 @@ Function UpdateTSS{
 			LogException "Exception happened in tss_update-script.ps1" $_
 		}
 		Pop-Location 
-		LogInfo "[update] LogCollector update procedure completed." green
+		LogInfo "[update] AutoLog update procedure completed." green
 	}Else{
 		LogWarn "[update] unable to find tss_update-script.ps1"
 	}
@@ -9368,18 +9682,18 @@ Function ValidateConfigFile{
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function ReadParameterFromLogCollectorReg{
+Function ReadParameterFromAutoLogReg{
 	EnterFunc $MyInvocation.MyCommand.Name
-	If(!(Test-Path "$global:LogCollectorParamRegKey")){
-		LogInfoFile "There are no parameter settings in LogCollector registry."
+	If(!(Test-Path "$global:AutoLogParamRegKey")){
+		LogInfoFile "There are no parameter settings in AutoLog registry."
 		Return $Null
 	}Else{
 		If(!$Status.IsPresent){ # In case of -Status, we don't want to show this message to make console log simple.
-			LogInfo "Reading parameters from LogCollector registry."
+			LogInfo "Reading parameters from AutoLog registry."
 		}
 		
-		$ParamArray = Get-Item "$global:LogCollectorParamRegKey" | Select-Object -ExpandProperty Property -ErrorAction Ignore
-		$RegValue = Get-ItemProperty -Path  "$global:LogCollectorParamRegKey" -ErrorAction Ignore
+		$ParamArray = Get-Item "$global:AutoLogParamRegKey" | Select-Object -ExpandProperty Property -ErrorAction Ignore
+		$RegValue = Get-ItemProperty -Path  "$global:AutoLogParamRegKey" -ErrorAction Ignore
 		ForEach($Param in $ParamArray){
 			$Data = $RegValue.$Param
 
@@ -9410,26 +9724,26 @@ Function ReadParameterFromLogCollectorReg{
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function SaveParameterToLogCollectorReg{
+Function SaveParameterToAutoLogReg{
 	EnterFunc $MyInvocation.MyCommand.Name
 
-	# Save parameter to LogCollector registry
+	# Save parameter to AutoLog registry
 	ForEach($Key in $global:BoundParameters.Keys){
 		If($Key -ne 'Start' -and $Key -ne 'StartAutoLogger' -and $Key -ne 'StartNoWait' -and  $Key -ne 'NewSession' -and $Key -ne 'DebugMode'){
-			SaveToLogCollectorReg $Key $global:BoundParameters[$Key]
+			SaveToAutoLogReg $Key $global:BoundParameters[$Key]
 		}
 	}
-	SaveToLogCollectorReg 'LogFolder' $global:LogFolder
+	SaveToAutoLogReg 'LogFolder' $global:LogFolder
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function RemoveParameterFromLogCollectorReg{
+Function RemoveParameterFromAutoLogReg{
 	EnterFunc $MyInvocation.MyCommand.Name
 
-	# Delete parameters saved in LogCollector registry
-	If(Test-Path -Path $global:LogCollectorParamRegKey){
-		LogInfo "Removing $global:LogCollectorParamRegKey"
-		Remove-Item $global:LogCollectorParamRegKey -Force
+	# Delete parameters saved in AutoLog registry
+	If(Test-Path -Path $global:AutoLogParamRegKey){
+		LogInfo "Removing $global:AutoLogParamRegKey"
+		Remove-Item $global:AutoLogParamRegKey -Force
 	}
 
 	EndFunc $MyInvocation.MyCommand.Name
@@ -9539,14 +9853,14 @@ Function RunFunction{
 Function PreRequisiteCheckInStage1{
 	EnterFunc $MyInvocation.MyCommand.Name
 
-	# Issue#331 - Disallow starting more than one LogCollector instance at the same time.
+	# Issue#331 - Disallow starting more than one AutoLog instance at the same time.
 	If($global:ParameterArray -contains 'Start' -or $global:ParameterArray -contains 'StartAutoLogger' -or $global:ParameterArray -contains 'Stop' -or $global:ParameterArray -contains 'CollectLog' -or $global:ParameterArray -contains 'StartDiag'){
-		$LogCollectorProcesses = Get-CimInstance Win32_Process | Where-Object {$_.Commandline -like "*LogCollector.ps1*-NewSession*"}
-		If($LogCollectorProcesses -ne $Null){
+		$AutoLogProcesses = Get-CimInstance Win32_Process | Where-Object {$_.Commandline -like "*AutoLog.ps1*-NewSession*"}
+		If($AutoLogProcesses -ne $Null){
 			$MyPID = $PID  # $PID is built-in env value that has PID of this instance of PowerShell.exe.
-			ForEach($LogCollectorProcess in $LogCollectorProcesses){
-				If($MyPID -ne $LogCollectorProcess.ProcessId){
-					LogInfo "ERROR: Currently another instance of LogCollector is running with PID $($LogCollectorProcess.ProcessId)." "Red"
+			ForEach($AutoLogProcess in $AutoLogProcesses){
+				If($MyPID -ne $AutoLogProcess.ProcessId){
+					LogInfo "ERROR: Currently another instance of AutoLog is running with PID $($AutoLogProcess.ProcessId)." "Red"
 					CleanupAndExit
 				}
 			}
@@ -9591,7 +9905,7 @@ Function PreRequisiteCheckInStage1{
 		$dateTSSver = [DateTime]($TSSver)
 		$DiffDate = ((Get-Date) - $dateTSSver )
 		If($DiffDate.Days -gt 30){
-			LogError "LogCollector script is outdated more than 30 days. Please -Update or download latest version: 'https://aka.ms/getTSS' or 'https://cesdiagtools.blob.core.windows.net/windows/LogCollector.zip'"
+			LogError "AutoLog script is outdated more than 30 days. Please -Update or download latest version: 'https://aka.ms/getTSS' or 'https://cesdiagtools.blob.core.windows.net/windows/AutoLog.zip'"
 			CleanUpandExit
 		}
 	}
@@ -9609,7 +9923,7 @@ Function PreRequisiteCheckInStage2{
 	.SYNOPSIS
 	 Inspects traces to be started
 	.DESCRIPTION
-	 Make sure $LogCollector is not empty and number of traces to be started does not exceed system limitation which is currently 56 sessions.
+	 Make sure $AutoLog is not empty and number of traces to be started does not exceed system limitation which is currently 56 sessions.
 	#>
 	EnterFunc $MyInvocation.MyCommand.Name
 	
@@ -9640,7 +9954,7 @@ Function PreRequisiteCheckInStage2{
 	# Log folder check. It must be other than profile in case of -StartAutoLogger.
 	If($StartAutoLogger.IsPresent -and ![string]::IsNullOrEmpty($LogFolderName)){
 		if($LogFolderName -like "C:\Users\*"){
-			LogError "Setting log folder to under profile($LogFolderName) is not supported in case of -StartAutoLogger. Please specify somewhere other than profile(ex. -LogFolderName D:\LogCollector)."
+			LogError "Setting log folder to under profile($LogFolderName) is not supported in case of -StartAutoLogger. Please specify somewhere other than profile(ex. -LogFolderName D:\AutoLog)."
 			CleanUpAndExit
 		}
 	}
@@ -9656,7 +9970,7 @@ Function PreRequisiteCheckForStart{
 		FwRunAdminCheck
 	}
 
-	# Running LogCollector on x64 system with x86 powershell.exe may fail later.(#591)
+	# Running AutoLog on x64 system with x86 powershell.exe may fail later.(#591)
 	If (![Environment]::Is64BitProcess -and [Environment]::Is64BitOperatingSystem){
 		LogError "Windows PowerShell Workflow is not supported in a Windows PowerShell x86-based console. Open a Windows PowerShell x64-based console, and then try again."
 		CleanUpandExit
@@ -9666,7 +9980,7 @@ Function PreRequisiteCheckForStart{
 		FwPlaySound
 		LogInfo "Note for this step: If you do not agree on Recording, the solution for your issue might be delayed a lot, because MS support engineer needs to match the time (hh:mm:ss) of your problem (error message) exactly with the time stamps in debug data." "Magenta"
 		LogInfo "[Action-Privacy] We need your consent to allow Problem Step Recording and-or Screen-Video recording, please answer Y or N" "Cyan"
-		# Issue#373 - LogCollector hang in ISE
+		# Issue#373 - AutoLog hang in ISE
 		$Answer = FwRead-Host-YN -Message "Press Y for Yes = allow recording, N for No (timeout=20s)" -Choices 'yn' -TimeOut 20
 		#CHOICE /T 20 /C yn /D y /M " Press Y for Yes = allow recording, N for No "
 		If(!$Answer){
@@ -9695,14 +10009,14 @@ Function PreRequisiteCheckForStart{
 		If($RemoveVideo){
 			LogInfo "Removing -Video from parameter list and will continue without recording video."
 			$global:ParameterArray = RemoveItemFromArray $global:ParameterArray "Video"
-			$TraceObject = $LogCollector | Where-Object {$_.Name -eq 'Video'}
+			$TraceObject = $AutoLog | Where-Object {$_.Name -eq 'Video'}
 			If($TraceObject -ne $Null){
-				$LogCollector.Remove($TraceObject) | Out-Null
+				$AutoLog.Remove($TraceObject) | Out-Null
 			}
 		}
 	}
 
-	# See if external commands exist. If not, remove the command from LogCollector.
+	# See if external commands exist. If not, remove the command from AutoLog.
 	$RemovedExternalCommandList = New-Object 'System.Collections.Generic.List[Object]'
 	ForEach($ExternalCommand in $ExternalCommandList.Keys){
 		If($global:BoundParameters.ContainsKey($ExternalCommand)){
@@ -9710,9 +10024,9 @@ Function PreRequisiteCheckForStart{
 			If($Command -eq $Null){
 				$global:ParameterArray = RemoveItemFromArray $global:ParameterArray $ExternalCommand
 				$global:BoundParameters.Remove($ExternalCommand) | Out-Null
-				$TraceObject = $LogCollector | Where-Object {$_.Name -eq $ExternalCommand}
+				$TraceObject = $AutoLog | Where-Object {$_.Name -eq $ExternalCommand}
 				If($TraceObject -ne $Null){
-					$LogCollector.Remove($TraceObject) | Out-Null
+					$AutoLog.Remove($TraceObject) | Out-Null
 					$RemovedExternalCommandList.Add($ExternalCommand)
 				}
 			}
@@ -9721,10 +10035,10 @@ Function PreRequisiteCheckForStart{
 
 	If($RemovedExternalCommandList.count -gt 0){
 		If($global:IsLiteMode){
-			LogInfo "You are using Lite version of LogCollector. Below log(s) will be not collected." "Magenta"
-			LogInfo "Please download full version of LogCollector from 'https://aka.ms/getTSS' to collect all logs." "Magenta"
+			LogInfo "You are using Lite version of AutoLog. Below log(s) will be not collected." "Magenta"
+			LogInfo "Please download full version of AutoLog from 'https://aka.ms/getTSS' to collect all logs." "Magenta"
 		}Else{
-			LogInfo "Below command(s) does not exist. LogCollector will not collect the log." "Magenta"
+			LogInfo "Below command(s) does not exist. AutoLog will not collect the log." "Magenta"
 		}
 		ForEach($RemovedExternalCommand in $RemovedExternalCommandList){
 			LogInfo "  - $RemovedExternalCommand" "Magenta"
@@ -9741,7 +10055,7 @@ Function PreRequisiteCheckForStart{
 			'Pool' {
 				If([String]::IsNullOrEmpty($XperfTag)){
 					LogError "Xperf with Pool profile needs -XperfTag switch. Please run with `'-Xperf $Xperf -XperfTag <PoolTag>`'."
-					LogInfo "Ex.: .\LogCollector.ps1 -Xperf Pool -XperfTag TcpE+AleE+AfdE+AfdX" "Yellow"
+					LogInfo "Ex.: .\AutoLog.ps1 -Xperf Pool -XperfTag TcpE+AleE+AfdE+AfdX" "Yellow"
 					CleanUpAndExit
 				}
 			}
@@ -9763,13 +10077,13 @@ Function PreRequisiteCheckForStart{
 	# Sysmon
 	If($global:BoundParameters.ContainsKey('SysMon')){
 
-		# To see if sysmon was enabled by LogCollector, we check if 'Sysmon' service is running and also the 'sysmon' is stored in LogCollector reg.
+		# To see if sysmon was enabled by AutoLog, we check if 'Sysmon' service is running and also the 'sysmon' is stored in AutoLog reg.
 		$SysMonService = Get-Service -Name "SysMon" -ErrorAction Ignore
 
 		If($SysMonService -ne $Null){
-			$RegValues = Get-ItemProperty -Path  $global:LogCollectorParamRegKey -ErrorAction Ignore
+			$RegValues = Get-ItemProperty -Path  $global:AutoLogParamRegKey -ErrorAction Ignore
 			If($RegValues.SysMon -eq $Null){
-				LogWarn "Detected running SysMon started from outside of LogCollector. LogCollector will NOT restart and stop the running SysMon."
+				LogWarn "Detected running SysMon started from outside of AutoLog. AutoLog will NOT restart and stop the running SysMon."
 				LogInfo "=> To stop running SysMon, run `'SysMon.exe -u -nobanner`' manually." "Cyan"
 				If(!$noAsk.IsPresent){
 					FwPlaySound
@@ -9782,10 +10096,10 @@ Function PreRequisiteCheckForStart{
 				LogInfo "Removing -SysMon from script parameter."
 				$global:ParameterArray = RemoveItemFromArray $global:ParameterArray 'SysMon'
 				$global:BoundParameters.Remove('SysMon') | Out-Null
-				# Remove SysMon from $LogCollector which is the list of traces to be collected.
-				$TraceObject = $LogCollector | Where-Object {$_.Name -eq 'SysMon'}
+				# Remove SysMon from $AutoLog which is the list of traces to be collected.
+				$TraceObject = $AutoLog | Where-Object {$_.Name -eq 'SysMon'}
 				If($TraceObject -ne $Null){
-					$LogCollector.Remove($TraceObject) | Out-Null
+					$AutoLog.Remove($TraceObject) | Out-Null
 				}
 			}
 		}
@@ -9876,7 +10190,7 @@ Function PreRequisiteCheckForStart{
 		LogInfo "Testing if Write-EventLog work with specified remote hosts. This may take a while in case Firewall on remote host blocks the access."
 		ForEach($RemoteHost in $RemoteHosts){
 			Try{
-				Write-EventLog -ComputerName $RemoteHost -LogName 'System' -EntryType Info -Source "Eventlog" -EventId 1 -Message "Test event from LogCollector" -Category 1 -ErrorAction Stop
+				Write-EventLog -ComputerName $RemoteHost -LogName 'System' -EntryType Info -Source "Eventlog" -EventId 1 -Message "Test event from AutoLog" -Category 1 -ErrorAction Stop
 			}Catch{
 				$Message = "Unable to write an event to $RemoteHost. Remoting would not work on specified remote hosts($RemoteHost)"
 				LogError $Message
@@ -9894,8 +10208,8 @@ Function PreRequisiteCheckForStart{
 		}
 	}
 
-	# Check 1: Make sure $LogCollector is not empty.
-	If($LogCollector.Count -eq 0){
+	# Check 1: Make sure $AutoLog is not empty.
+	If($AutoLog.Count -eq 0){
 		If($StartAutoLogger.IsPresent){
 			LogInfo "ERROR: There are no traces that support AutoLogger in specified switch or scenario. Exiting." "Red"
 		}Else{
@@ -9904,9 +10218,9 @@ Function PreRequisiteCheckForStart{
 		CleanUpandExit
 	}
 
-	# Check 2: Validate $LogCollector
+	# Check 2: Validate $AutoLog
 	Try{
-		ValidateCollection $LogCollector
+		ValidateCollection $AutoLog
 	}Catch{
 		LogException "An exception happened in ValidateCollection" $_
 		CleanUpandExit
@@ -9914,8 +10228,8 @@ Function PreRequisiteCheckForStart{
 
 	# Check 3: trace count. If it is more than 56 sessions, stop unnecessary sessions 
 	#		  and see it gets less than 56. It is still over 56, show error and exit.
-	If($LogCollector.count -ne 0){
-		$ETWTracesObjectList = $LogCollector | Where-Object {$_.LogType -eq 'ETW'}
+	If($AutoLog.count -ne 0){
+		$ETWTracesObjectList = $AutoLog | Where-Object {$_.LogType -eq 'ETW'}
 		If($ETWTracesObjectList -ne $Null -and $ETWTracesObjectList.count -ne 0){
 			# Inspect the trace provider and count number of trace to be started.
 			$TraceList = New-Object 'System.Collections.Generic.List[Object]'
@@ -9940,15 +10254,15 @@ Function PreRequisiteCheckForStart{
 			LogDebug "No ETW traces found."
 		}
 
-		$LogCollectorTraceCount = $TraceList.Count
+		$AutoLogTraceCount = $TraceList.Count
 
 		# Add ETW session count for commands
 		ForEach($Key in $ETWSessionCountForCommand.Keys){
 			$CommandTraceObject = $Null
-			$CommandTraceObject = $LogCollector | Where-Object {$_.Name -eq $Key}
+			$CommandTraceObject = $AutoLog | Where-Object {$_.Name -eq $Key}
 			If($CommandTraceObject -ne $Null){
-				LogDebug "3: Adding $Key with trace count ($($ETWSessionCountForCommand[$Key])) to LogCollectorTraceCount"
-				$LogCollectorTraceCount += $ETWSessionCountForCommand[$Key]
+				LogDebug "3: Adding $Key with trace count ($($ETWSessionCountForCommand[$Key])) to AutoLogTraceCount"
+				$AutoLogTraceCount += $ETWSessionCountForCommand[$Key]
 			}
 		}
 
@@ -9957,10 +10271,10 @@ Function PreRequisiteCheckForStart{
 		$RunningSessionList = $Null
 		$RunningSessionList = GetETWSessionByLogman
 		$SessionCount = $RunningSessionList.Count
-		$TotalExpectedTraceCount = $SessionCount + $LogCollectorTraceCount + 3	#we# +3, as Network scenarios often fail with error 1450 = ERROR_NO_SYSTEM_RESOURCES, as i.e. netsh needs an additional session
-		LogInfoFile "No. of LogCollector trace session=$LogCollectorTraceCount / Existing sessions=$SessionCount"
+		$TotalExpectedTraceCount = $SessionCount + $AutoLogTraceCount + 3	#we# +3, as Network scenarios often fail with error 1450 = ERROR_NO_SYSTEM_RESOURCES, as i.e. netsh needs an additional session
+		LogInfoFile "No. of AutoLog trace session=$AutoLogTraceCount / Existing sessions=$SessionCount"
 		If($TotalExpectedTraceCount -gt $MaxETWSessionCount){
-			LogInfo "Number of trace session ($LogCollectorTraceCount for LogCollector plus $SessionCount for existing sessions) will exceed system wide max number of session ($MaxETWSessionCount). Trying to stop unnessessary running ETW sessions."
+			LogInfo "Number of trace session ($AutoLogTraceCount for AutoLog plus $SessionCount for existing sessions) will exceed system wide max number of session ($MaxETWSessionCount). Trying to stop unnessessary running ETW sessions."
 			# Stopping unnecessary sessions
 			$DeletedTraceCount=0
 			ForEach($RunningSession in $RunningSessionList){
@@ -9971,17 +10285,17 @@ Function PreRequisiteCheckForStart{
 					$DeletedTraceCount++
 				}
 			}
-			LogWarn "$DeletedTraceCount traces has been stopped to create room to run LogCollector. See `'Stopped-ETWSessionList.txt`' in $global:LogFolder to see stopped traces."
+			LogWarn "$DeletedTraceCount traces has been stopped to create room to run AutoLog. See `'Stopped-ETWSessionList.txt`' in $global:LogFolder to see stopped traces."
 
-			# Double check if we have enough space to run etw trace by LogCollector.
+			# Double check if we have enough space to run etw trace by AutoLog.
 			$RunningSessionList = $Null
 			$RunningSessionList = GetETWSessionByLogman
 			$SessionCount = $RunningSessionList.Count
-			$TotalExpectedTraceCount = $SessionCount + $LogCollectorTraceCount
+			$TotalExpectedTraceCount = $SessionCount + $AutoLogTraceCount
 			# If total number of session is still larger than $MaxETWSessionCount, show error message and exit.
 			If($TotalExpectedTraceCount -gt $MaxETWSessionCount){
-				LogError "Number of trace session($LogCollectorTraceCount for LogCollector and $SessionCount for existing sessions) will be $TotalExpectedTraceCount and it exceeds system total maximum number of session($MaxETWSessionCount)."
-				Write-Host "Please try manually run $global:LogFolder\LogManStop.cmd from elevated commpand prompt to reduce running ETW sessions. And then run LogCollector again."
+				LogError "Number of trace session($AutoLogTraceCount for AutoLog and $SessionCount for existing sessions) will be $TotalExpectedTraceCount and it exceeds system total maximum number of session($MaxETWSessionCount)."
+				Write-Host "Please try manually run $global:LogFolder\LogManStop.cmd from elevated commpand prompt to reduce running ETW sessions. And then run AutoLog again."
 				Write-Host "> $global:LogFolder\LogManStop.cmd" -ForegroundColor Yellow
 				CleanUpAndExit
 			}
@@ -10005,9 +10319,9 @@ Function PreRequisiteCheckForStart{
 				If($EstimatedLogSizeInMB -gt $FreeInMB){
 					LogInfo ("$global:ScriptPrefix may consume " + $EstimatedLogSizeInMB / 1024 + "GB at the maximum but free size of $Drive drive is " + [Math]::Ceiling($FreeInMB / 1024) + "GB.") "Magenta"
 					LogInfo ("You can change log folder using -LogFolderName switch.") "Cyan"
-					LogInfo ("Example: .\$ScriptName -Start -<TraceSwitch> -LogFolderName D:\LogCollector") "Cyan"
+					LogInfo ("Example: .\$ScriptName -Start -<TraceSwitch> -LogFolderName D:\AutoLog") "Cyan"
 					FwPlaySound
-					# Issue#373 - LogCollector hang in ISE
+					# Issue#373 - AutoLog hang in ISE
 					$Answer = FwRead-Host-YN -Message "Do you want to continue collecting data?" -Choices 'yn'
 					#CHOICE /C yn /M " Do you want to continue collecting data? "
 					If(!$Answer) {
@@ -10018,7 +10332,7 @@ Function PreRequisiteCheckForStart{
 			}
 		}
 	}Else{
-		LogDebug "Logcollector is empty."
+		LogDebug "AutoLog is empty."
 		Return
 	}
 	EndFunc $MyInvocation.MyCommand.Name
@@ -10029,15 +10343,15 @@ Function CalculateLogSize{
 	Param()
 	EnterFunc $MyInvocation.MyCommand.Name
 
-	If($LogCollector.Count -eq 0){
-		LogError "$LogCollector has not been initialized yet."
+	If($AutoLog.Count -eq 0){
+		LogError "$AutoLog has not been initialized yet."
 		Return $Null
 	}
 
 	# WPR
 	If($global:BoundParameters.ContainsKey('WPR')){
 		LogInfo "WARNING: WPR might consume large amount of free disk space if you run for long term. Use -Xperf instead in case you need to limit disk usage." "Magenta"
-		LogInfo "Ex) .\LogCollector.ps1 -Xperf General -XperfMaxSize 10240  # Limit log size to 10GB"
+		LogInfo "Ex) .\AutoLog.ps1 -Xperf General -XperfMaxSize 10240  # Limit log size to 10GB"
 
 		# Below calculation is applicable for in-memory mode but we use it for file mode as well since we don't have formula for file mode.
 		$MemorySizeInGB = (Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property capacity -Sum).Sum /1gb
@@ -10055,9 +10369,9 @@ Function CalculateLogSize{
 
 	# Calculate estimated log size and if free size of log drive is not enough, show warning message
 	$EstimatedLogSize = 0
-	If($LogCollector.Count -ne 0){
+	If($AutoLog.Count -ne 0){
 		# 1. We caluculate size of all ETW traces. It is caluculated with 2GB per a trace.
-		$ETWTraceObjects = $LogCollector | Where-Object {$_.LogType -eq 'ETW'}
+		$ETWTraceObjects = $AutoLog | Where-Object {$_.LogType -eq 'ETW'}
 		$EstimatedLogSizeInMB = $ETWTraceObjects.Count * $Script:ETLMaxSize # $Script:ETLMaxSize = 1024MB by default
 		LogDebug ("Added " + [Math]::Ceiling($EstimatedLogSizeInMB / 1024) + "GB for ETW")
 
@@ -11129,7 +11443,7 @@ Function WaitForMultipleEvents{
 		LogInfo "  - $($TestProperty999.TestName) - will stop as soon as being signaled"
 	}
 	If(-not $global:IsISE) {
-		LogInfo "Want to stop manually?: Press CTRL-C and later run .\LogCollector.ps1 -Stop" "Cyan"
+		LogInfo "Want to stop manually?: Press CTRL-C and later run .\AutoLog.ps1 -Stop" "Cyan"
 		[console]::TreatControlCAsInput = $true			# for (#556)
 	}
 
@@ -11181,7 +11495,7 @@ Function WaitForMultipleEvents{
 						Write-EventLog -LogName 'System' -EntryType Error -Source "EventLog" -EventId $script:RemoteStopEventID -Message "This is StopMe Event ID: $script:RemoteStopEventID from script $ScriptName in order to stop data collection. Event was sent by user $Env:username on computer $Env:Computername at $SendTimeStamp UTC" -Category 1 -ComputerName $RemoteHost
 					}Catch{
 						LogException "Error happened in Write-EventLog" $_
-						LogError "Please stop the script manually with '.\LogCollector.ps1 -Stop' on all remote hosts."
+						LogError "Please stop the script manually with '.\AutoLog.ps1 -Stop' on all remote hosts."
 					}
 				}
 			}
@@ -11194,7 +11508,7 @@ Function WaitForMultipleEvents{
 			# allow CTRL-C to stop WaitEvent loop and terminate TSSclock as well (#556 )
 			if ($Host.UI.RawUI.KeyAvailable -and (3 -eq [int]$Host.UI.RawUI.ReadKey("AllowCtrlC,IncludeKeyUp,NoEcho").Character))
 			{
-				Write-Host "You pressed CTRL-C. Do you want to terminate LogCollector [Y/N]?" -ForegroundColor Cyan
+				Write-Host "You pressed CTRL-C. Do you want to terminate AutoLog [Y/N]?" -ForegroundColor Cyan
 				$key = $Host.UI.RawUI.ReadKey("NoEcho, IncludeKeyDown")
 				if ($key.Character -eq "Y") { StopTSSClock; break; }
 			}
@@ -11682,7 +11996,7 @@ Function StartTTD{
 	If(![string]::IsNullOrEmpty($LogFolderName)){
 		$Script:LogTTD = FwNew-TemporaryFolder -RelativeFolder $LogFolderName
 	}Else{
-		$Script:LogTTD = FwNew-TemporaryFolder -RelativeFolder "$env:LOCALAPPDATA\LogCollector\"
+		$Script:LogTTD = FwNew-TemporaryFolder -RelativeFolder "$env:LOCALAPPDATA\AutoLog\"
 	}
 
 	If(!(Test-Path $Script:LogTTD)){
@@ -12117,8 +12431,8 @@ Function DetectPktMon{
 	EnterFunc $MyInvocation.MyCommand.Name
 	$fResult = $False
 
-	# Use LogCollector reg to see if PktMon is enabled or not.(#404 ,#445)
-	$RegValue = Get-ItemProperty -Path  "$global:LogCollectorParamRegKey" -ErrorAction Ignore
+	# Use AutoLog reg to see if PktMon is enabled or not.(#404 ,#445)
+	$RegValue = Get-ItemProperty -Path  "$global:AutoLogParamRegKey" -ErrorAction Ignore
 	$PktMonInReg = $RegValue.PktMon
 	If(![String]::IsNullOrEmpty($PktMonInReg)){
 		$fResult = $True
@@ -12195,8 +12509,8 @@ Function DetectFiddler{
 	param()
 	EnterFunc $MyInvocation.MyCommand.Name
 	$fResult = $False
-	# Use LogCollector reg to see if Fiddler is enabled or not.
-	$RegValue = Get-ItemProperty -Path  "$global:LogCollectorParamRegKey" -ErrorAction Ignore
+	# Use AutoLog reg to see if Fiddler is enabled or not.
+	$RegValue = Get-ItemProperty -Path  "$global:AutoLogParamRegKey" -ErrorAction Ignore
 	$FiddlerInReg = $RegValue.Fiddler
 	If(![String]::IsNullOrEmpty($FiddlerInReg)){
 		$fResult = $True
@@ -12262,10 +12576,10 @@ Function DetectSysMon{
 	EnterFunc $MyInvocation.MyCommand.Name
 	$fResult = $False
 
-	# To see if sysmon was enabled by LogCollector, we check if 'Sysmon' service is running and also the 'sysmon' is stored in LogCollector reg.
+	# To see if sysmon was enabled by AutoLog, we check if 'Sysmon' service is running and also the 'sysmon' is stored in AutoLog reg.
 	$SysMonService = Get-Service -Name "sysmon" -ErrorAction Ignore
 	If($SysMonService -ne $Null){
-		$RegValues = Get-ItemProperty -Path  $global:LogCollectorParamRegKey -ErrorAction Ignore
+		$RegValues = Get-ItemProperty -Path  $global:AutoLogParamRegKey -ErrorAction Ignore
 		If($RegValues.sysmon -ne $Null){
 			$fResult = $True
 		}
@@ -12334,13 +12648,13 @@ Function StartLiveKD{
 		}
 	}
 
-	# In case of StartNoWait, register the mode to LogCollector registry
+	# In case of StartNoWait, register the mode to AutoLog registry
 	If(($LiveKD -ne 'Start') -and ($global:ParameterArray -contains 'StartNoWait' -or $global:ParameterArray -contains 'StartAutoLogger')){
-		If(!(Test-Path $global:LogCollectorParamRegKey)){
-			RunCommands "LiveKD" "New-Item -Path `"$global:LogCollectorParamRegKey`" -Force -ErrorAction Stop" -ThrowException:$True -ShowMessage:$True  -ShowError:$True
+		If(!(Test-Path $global:AutoLogParamRegKey)){
+			RunCommands "LiveKD" "New-Item -Path `"$global:AutoLogParamRegKey`" -Force -ErrorAction Stop" -ThrowException:$True -ShowMessage:$True  -ShowError:$True
 		}
-		# Save parameter to LogCollector registry
-		SaveToLogCollectorReg 'LiveKD' $LiveKD
+		# Save parameter to AutoLog registry
+		SaveToAutoLogReg 'LiveKD' $LiveKD
 	}
 	EndFunc $MyInvocation.MyCommand.Name
 }
@@ -12349,12 +12663,12 @@ Function StopLiveKD{
 	EnterFunc $MyInvocation.MyCommand.Name
 
 	If($Stop.IsPresent){
-		# In case of -Stop, $LiveKD is set in ReadParameterFromLogCollectorReg().
+		# In case of -Stop, $LiveKD is set in ReadParameterFromAutoLogReg().
 		If([String]::IsNullOrEmpty($LiveKD)){
 			$LiveKD = "Both" # Set default value
 		}
-		# Remove 'LiveKD' registry in LogCollectorRegKey.
-		Remove-ItemProperty -Path $global:LogCollectorParamRegKey -Name 'LiveKD' -ErrorAction SilentlyContinue  # Record to $Error
+		# Remove 'LiveKD' registry in AutoLogRegKey.
+		Remove-ItemProperty -Path $global:AutoLogParamRegKey -Name 'LiveKD' -ErrorAction SilentlyContinue  # Record to $Error
 	}Else{ # Load from BoundParameters[]
 		$LiveKD = $global:BoundParameters['LiveKD']
 	}
@@ -12381,16 +12695,16 @@ Function DetectLiveKD{
 	EnterFunc $MyInvocation.MyCommand.Name
 	$fResult = $False
 
-	# Use LogCollector reg to see if LiveKD is enabled or not. For -Start, DetectLiveKD is called only to see if LiveKD is running.
+	# Use AutoLog reg to see if LiveKD is enabled or not. For -Start, DetectLiveKD is called only to see if LiveKD is running.
 	# But LiveKD is not a trace. So this function just returns with false in case of -Start.
 	If($Status.IsPresent){
-		$RegValue = Get-ItemProperty -Path  "$global:LogCollectorParamRegKey" -ErrorAction Ignore
+		$RegValue = Get-ItemProperty -Path  "$global:AutoLogParamRegKey" -ErrorAction Ignore
 		$LiveKDInReg = $RegValue.LiveKD
 		If(![String]::IsNullOrEmpty($LiveKDInReg) -and ($LiveKDInReg -eq 'Both' -or $LiveKDInReg -eq 'Stop')){
 			$fResult = $True
 		}
 	}ElseIf($Stop.IsPresent){
-		# In case of -Stop, $LiveKD is set in ReadParameterFromLogCollectorReg().
+		# In case of -Stop, $LiveKD is set in ReadParameterFromAutoLogReg().
 		If(![String]::IsNullOrEmpty($LiveKD) -and ($LiveKD -eq 'Both' -or $LiveKD -eq 'Stop')){
 			$fResult = $True
 		}
@@ -12406,13 +12720,13 @@ Function DetectGPresult{
 	EnterFunc $MyInvocation.MyCommand.Name
 	$fResult = $False
 	If($Status.IsPresent){
-		$RegValue = Get-ItemProperty -Path  "$global:LogCollectorParamRegKey" -ErrorAction Ignore
+		$RegValue = Get-ItemProperty -Path  "$global:AutoLogParamRegKey" -ErrorAction Ignore
 		$GPresultInReg = $RegValue.GPresult
 		If(![String]::IsNullOrEmpty($GPresultInReg) -and ($GPresultInReg -eq 'Both' -or $GPresultInReg -eq 'Stop')){
 			$fResult = $True
 		}
 	}ElseIf($Stop.IsPresent){
-		# In case of -Stop, $script:GPresult is set in ReadParameterFromLogCollectorReg().
+		# In case of -Stop, $script:GPresult is set in ReadParameterFromAutoLogReg().
 		If(![String]::IsNullOrEmpty($script:GPresult) -and ($script:GPresult -eq 'Both' -or $script:GPresult -eq 'Stop')){
 			$fResult = $True
 		}
@@ -12445,13 +12759,13 @@ Function DetectPoolMon{
 	EnterFunc $MyInvocation.MyCommand.Name
 	$fResult = $False
 	If($Status.IsPresent){
-		$RegValue = Get-ItemProperty -Path  "$global:LogCollectorParamRegKey" -ErrorAction Ignore
+		$RegValue = Get-ItemProperty -Path  "$global:AutoLogParamRegKey" -ErrorAction Ignore
 		$PoolMonInReg = $RegValue.PoolMon
 		If(![String]::IsNullOrEmpty($PoolMonInReg) -and ($PoolMonInReg -eq 'Both' -or $PoolMonInReg -eq 'Stop')){
 			$fResult = $True
 		}
 	}ElseIf($Stop.IsPresent){
-		# In case of -Stop, $script:PoolMon is set in ReadParameterFromLogCollectorReg().
+		# In case of -Stop, $script:PoolMon is set in ReadParameterFromAutoLogReg().
 		If(![String]::IsNullOrEmpty($script:PoolMon) -and ($script:PoolMon -eq 'Both' -or $script:PoolMon -eq 'Stop')){
 			$fResult = $True
 		}
@@ -12484,13 +12798,13 @@ Function DetectHandle{
 	EnterFunc $MyInvocation.MyCommand.Name
 	$fResult = $False
 	If($Status.IsPresent){
-		$RegValue = Get-ItemProperty -Path  "$global:LogCollectorParamRegKey" -ErrorAction Ignore
+		$RegValue = Get-ItemProperty -Path  "$global:AutoLogParamRegKey" -ErrorAction Ignore
 		$HandleInReg = $RegValue.Handle
 		If(![String]::IsNullOrEmpty($HandleInReg) -and ($HandleInReg -eq 'Both' -or $HandleInReg -eq 'Stop')){
 			$fResult = $True
 		}
 	}ElseIf($Stop.IsPresent){
-		# In case of -Stop, $script:Handle is set in ReadParameterFromLogCollectorReg().
+		# In case of -Stop, $script:Handle is set in ReadParameterFromAutoLogReg().
 		If(![String]::IsNullOrEmpty($script:Handle) -and ($script:Handle -eq 'Both' -or $script:Handle -eq 'Stop')){
 			$fResult = $True
 		}
@@ -12516,14 +12830,14 @@ Function StartProcDump{
 		RunProcDump
 	}
 
-	# In case of StartNoWait, register the mode to LogCollector\Parameters registry
-	If(!(Test-Path $global:LogCollectorParamRegKey)){
-		RunCommands "ProcDump" "New-Item -Path `"$global:LogCollectorParamRegKey`" -Force -ErrorAction Stop" -ThrowException:$True -ShowMessage:$False  -ShowError:$True
+	# In case of StartNoWait, register the mode to AutoLog\Parameters registry
+	If(!(Test-Path $global:AutoLogParamRegKey)){
+		RunCommands "ProcDump" "New-Item -Path `"$global:AutoLogParamRegKey`" -Force -ErrorAction Stop" -ThrowException:$True -ShowMessage:$False  -ShowError:$True
 	}
-	# Saving parameters to LogCollector registry for -NoWaistart and also so that -Status can detect procdump.
-	SaveToLogCollectorReg 'ProcDump' ($ProcDump -join ',') # $ProcDump is string array. Hence convert it to comma separated single string.
-	SaveToLogCollectorReg 'ProcDumpOption' $ProcDumpOption
-	SaveToLogCollectorReg 'ProcDumpInterval' $ProcDumpInterval	#we#604
+	# Saving parameters to AutoLog registry for -NoWaistart and also so that -Status can detect procdump.
+	SaveToAutoLogReg 'ProcDump' ($ProcDump -join ',') # $ProcDump is string array. Hence convert it to comma separated single string.
+	SaveToAutoLogReg 'ProcDumpOption' $ProcDumpOption
+	SaveToAutoLogReg 'ProcDumpInterval' $ProcDumpInterval	#we#604
 
 	LogDebug "[StartProcDump] ProcDumpOption $ProcDumpOption / global: $global:ProcDumpOption - ProcDumpInterval $ProcDumpInterval / global: $global:ProcDumpInterval - Bound: $($global:BoundParameters['ProcDumpInterval'])"
 	EndFunc $MyInvocation.MyCommand.Name
@@ -12555,7 +12869,7 @@ Function RunProcDump{
 
 Function StopProcDump{
 	EnterFunc $MyInvocation.MyCommand.Name
-	# In case of -Stop, $ProcDump, $ProcDumpOption and $ProcDumpInterval are set in ReadParameterFromLogCollectorReg().
+	# In case of -Stop, $ProcDump, $ProcDumpOption and $ProcDumpInterval are set in ReadParameterFromAutoLogReg().
 	LogDebug "[StopProcDump] ProcDumpOption: $ProcDumpOption - ProcDumpInterval: $ProcDumpInterval - global: $global:ProcDumpInterval"
 
 	If($ProcDumpOption -eq 'Start'){
@@ -12575,12 +12889,12 @@ Function DetectProcDump{
 	EnterFunc $MyInvocation.MyCommand.Name
 	$fResult = $False
 
-	If(!(Test-Path "$global:LogCollectorParamRegKey")){
-		LogDebug "There are no parameter settings in LogCollector registry."
+	If(!(Test-Path "$global:AutoLogParamRegKey")){
+		LogDebug "There are no parameter settings in AutoLog registry."
 		$fResult = $False
 	} else {
-		$ParamArray = Get-Item "$global:LogCollectorParamRegKey" | Select-Object -ExpandProperty Property -ErrorAction Ignore
-		$RegValue = Get-ItemProperty -Path  "$global:LogCollectorParamRegKey" -ErrorAction Ignore
+		$ParamArray = Get-Item "$global:AutoLogParamRegKey" | Select-Object -ExpandProperty Property -ErrorAction Ignore
+		$RegValue = Get-ItemProperty -Path  "$global:AutoLogParamRegKey" -ErrorAction Ignore
 		ForEach($Param in $ParamArray){
 			$Data = $RegValue.$Param
 			If($Param -eq 'Procdump'){
@@ -12783,7 +13097,7 @@ Function WPRPostStop{
 Function XperfPostStop{
 	EnterFunc $MyInvocation.MyCommand.Name
 
-	$RegValue = Get-ItemProperty -Path  "$global:LogCollectorParamRegKey" -ErrorAction Ignore
+	$RegValue = Get-ItemProperty -Path  "$global:AutoLogParamRegKey" -ErrorAction Ignore
 	$LogFolderInReg = $RegValue.LogFolder
 	If(![String]::IsNullOrEmpty($LogFolderInReg)){
 		$XperfFileName = "$LogFolderInReg\xperf.etl"
@@ -12828,7 +13142,7 @@ Function PSRPreStart{
 	$PSRProcess = Get-Process -Name 'PSR' -ErrorAction Ignore
 	If($PSRProcess -ne $Null){
 		# Trying to kill psr by using taskkill.exe.
-		LogInfo "Currently PSR.exe is running. Stopping the process and re-run the PSR from LogCollector."
+		LogInfo "Currently PSR.exe is running. Stopping the process and re-run the PSR from AutoLog."
 		RunCommands "PSR" "TASKKILL.exe /F /IM psr.exe /T"
 	}
 	EndFunc $MyInvocation.MyCommand.Name
@@ -12872,7 +13186,7 @@ Function VideoPostStop{
 Function TTDPreStart{ #we# #532
 	EnterFunc $MyInvocation.MyCommand.Name
 	LogDebug "Accepting TTD/TTD EULA per registry"
-	# if using \BIN64\TTTracer.exe from package LogCollector_TTD.zip
+	# if using \BIN64\TTTracer.exe from package AutoLog_TTD.zip
 	Try{
 		If(!(Test-Path "HKCU:.DEFAULT\Software\Microsoft\TTD")){ #HKCU\.DEFAULT\Software\Microsoft\TTD
 			New-Item -Path "HKCU:.DEFAULT\Software\Microsoft\TTD" -Force -ErrorAction Ignore | Out-Null
@@ -13148,15 +13462,15 @@ $wscDefinition = @"
         }
 "@
 #endregion helper functions
-function CollectSEC_DefenderLog
+function CollectDefenderLog
 {
 	EnterFunc $MyInvocation.MyCommand.Name
 	$ProcessWaitMin = 5	# wait max minutes to complete
 	$NetTraceI = $True
 	If($global:BoundParameters.ContainsKey('DefenderDurInMin')){
-		$global:SEC_DefenderDurInMin = $global:DefenderDurInMin
-	} else {$global:SEC_DefenderDurInMin = 5}
-	$MinutesToRun = $global:SEC_DefenderDurInMin
+		$global:DefenderDurInMin = $global:DefenderDurInMin
+	} else {$global:DefenderDurInMin = 5}
+	$MinutesToRun = $global:DefenderDurInMin
 	InitXmlLog
 	LogInfo "[$($MyInvocation.MyCommand.Name)] Running Defender Get-Logs"
 	#Store paths for MpCmdRun.exe usage
@@ -13226,7 +13540,7 @@ function CollectSEC_DefenderLog
 		}
 	}
 
-	LogInfo "[$($MyInvocation.MyCommand.Name)]. Done SEC_Defender Get-Logs"
+	LogInfo "[$($MyInvocation.MyCommand.Name)]. Done Defender Get-Logs"
 
 	EndFunc $MyInvocation.MyCommand.Name
 }
@@ -13256,7 +13570,7 @@ ForEach($Key in $MyInvocation.BoundParameters.Keys){
 
 # Display script version
 If((IsStart) -and $global:BoundParameters.ContainsKey('NewSession')){
-	LogInfo "LogCollector Script Version: $global:TssVerDate" "Cyan"
+	LogInfo "AutoLog Script Version: $global:TssVerDate" "Cyan"
 }
 
 If((IsStart) -and !$global:BoundParameters.ContainsKey('Start')){
@@ -13264,8 +13578,8 @@ If((IsStart) -and !$global:BoundParameters.ContainsKey('Start')){
 	$global:ParameterArray = InsertArrayIntoArray -Array $global:ParameterArray -insertAfter 0 -valueToInsert 'Start'
 }
 
-# Set $LogCollectorCommandline. This is used when new PowerShell session is created.
-$Script:LogCollectorCommandline = $MyInvocation.Line
+# Set $AutoLogCommandline. This is used when new PowerShell session is created.
+$Script:AutoLogCommandline = $MyInvocation.Line
 
 # Start new PowerShell session to clear all pre-existing global variables and run on fresh environment.
 If($global:ParameterArray -notcontains 'NewSession' -and ((IsStart) -or $global:ParameterArray -contains 'StartAutoLogger' -or $global:ParameterArray -contains 'Stop' -or $global:ParameterArray -contains 'CollectLog'-or $global:ParameterArray -contains 'StartDiag')){
@@ -13274,10 +13588,10 @@ If($global:ParameterArray -notcontains 'NewSession' -and ((IsStart) -or $global:
 			LogError "-StopAutologger is no longer used. Please use '-Stop' instead to stop and delete autologger sessions."
 			CleanUpAndExit
 		}
-		LogWarn "LogCollector is running on PowerShell ISE. Global variables created in previous run might be reused and that causes expected behavior. When you see value in tss_config file is updated but not reflected in the session, please relaunch the PowerShell ISE and run it again for workaround."
+		LogWarn "AutoLog is running on PowerShell ISE. Global variables created in previous run might be reused and that causes expected behavior. When you see value in tss_config file is updated but not reflected in the session, please relaunch the PowerShell ISE and run it again for workaround."
 	}Else{
 		# To handle path having space, use &(call operator) to start new powershell session
-		$CommandArg = $MyInvocation.Line -replace "^.*ps1.",""  # & 'C:\temp\LogCollector (1)\LogCollector.ps1' -Dev_TEST1 => -Dev_TEST1
+		$CommandArg = $MyInvocation.Line -replace "^.*ps1.",""  # & 'C:\temp\AutoLog (1)\AutoLog.ps1' -Dev_TEST1 => -Dev_TEST1
 		$CommandArg = $CommandArg -replace "-StopAutologger","-Stop"  # Replace -StopAutologger with -Stop as -StopAutologger is no longer used.
 		$cmdline = "& '$($MyInvocation.MyCommand.Path)' $CommandArg -NewSession" 
 
@@ -13297,9 +13611,9 @@ If(!$noPrereqC.IsPresent){
 
 # Show EULA if needed.
 If($AcceptEULA.IsPresent){
-	$eulaAccepted = ShowEULAIfNeeded "LogCollector" 2  # Silent accept mode.
+	$eulaAccepted = ShowEULAIfNeeded "AutoLog" 2  # Silent accept mode.
 }Else{
-	$eulaAccepted = ShowEULAIfNeeded "LogCollector" 0  # Show EULA popup at first run.
+	$eulaAccepted = ShowEULAIfNeeded "AutoLog" 0  # Show EULA popup at first run.
 }
 
 if ($eulaAccepted -ne "Yes")
@@ -13317,21 +13631,21 @@ $Error.Clear()
 #
 # region Global variables
 #
-$global:ScriptPrefix 	= 'LogCollector'
+$global:ScriptPrefix 	= 'AutoLog'
 $global:ScriptName 		= $MyInvocation.MyCommand.Name
 $global:ScriptFolder 	= Split-Path $MyInvocation.MyCommand.Path -Parent
 $global:ScriptsFolder 	= $global:ScriptFolder + "\scripts"
 $global:ConfigFolder	= $global:ScriptFolder + "\config"
 $global:ConfigFile		= $global:ConfigFolder + "\tss_config.cfg"
-$global:InvocationLine	= $($MyInvocation.Line) #we# to enable inspect in LogCollector_[POD].psm1
+$global:InvocationLine	= $($MyInvocation.Line) #we# to enable inspect in AutoLog_[POD].psm1
 $global:IsRemoting		= $False
 $global:ProcDump		= ""
 $global:OperatingSystemInfo = global:FwGetOperatingSystemInfo
 $global:OSBuild			= [int]$global:OperatingSystemInfo.CurrentBuildHex
 $global:OSVersion		= [environment]::OSVersion.Version # This is just for compatibility.
 $global:OriginalDisableRegistryTools = (Get-ItemProperty -ErrorAction Ignore -Path Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Policies\System).DisableRegistryTools
-$global:LogCollectorRegKey		= "HKLM:Software\Microsoft\CESDiagnosticTools\LogCollector" # To support autologger and purge task, need to set params to under HKLM
-$global:LogCollectorParamRegKey = "$global:LogCollectorRegKey\Parameters"
+$global:AutoLogRegKey		= "HKLM:Software\Microsoft\CESDiagnosticTools\AutoLog" # To support autologger and purge task, need to set params to under HKLM
+$global:AutoLogParamRegKey = "$global:AutoLogRegKey\Parameters"
 $global:IsServerCore	= IsServerCore
 $global:IsServerSKU 	= FwGetSrvSKU
 $global:IsISE 			= $Host.Name -match "ISE Host"
@@ -13356,9 +13670,9 @@ cd $global:ScriptFolder
 # Make sure all *.ps1/.psm1 files are Unblocked 
 Get-ChildItem -Recurse -Path $global:ScriptFolder\*.ps* | Unblock-File -Confirm:$false
 
-# In case of stop, read parameters from LogCollector registry and set them to $global:BoundParameters
+# In case of stop, read parameters from AutoLog registry and set them to $global:BoundParameters
 If($Stop.IsPresent -or $Status.IsPresent){
-	ReadParameterFromLogCollectorReg # This adds params to $global:BoundParameters
+	ReadParameterFromAutoLogReg # This adds params to $global:BoundParameters
 }
 
 # # Version check
@@ -13375,25 +13689,25 @@ $global:LogPrefix 		= $env:COMPUTERNAME + "_" + "$(Get-Date -f yyMMdd-HHmmss)_"
 $global:LogSuffix 		= "-$(Get-Date -f yyyy-MM-dd.HHmm.ss)"  
 
 # Log sub folder
-$LogSubFolder = 'LogCollector_' + $env:COMPUTERNAME + "_" + "$(Get-Date -f yyMMdd-HHmmss)_" 
+$LogSubFolder = 'AutoLog_' + $env:COMPUTERNAME + "_" + "$(Get-Date -f yyMMdd-HHmmss)_" 
 
 # Log folders
 # 1. If -LogFolderName exists, set it to $global:LogFolder
 # 2. Set default log foldername($global:LogRoot + $LogSubFolder)
-# 3. If 'LogFolder' is saved in LogCollector registry, set it to $global:LogFolder
+# 3. If 'LogFolder' is saved in AutoLog registry, set it to $global:LogFolder
 If($global:BoundParameters.ContainsKey('Start') -and $global:BoundParameters.ContainsKey('LogFolderName')){
 	$global:LogRoot = $LogFolderName + "\"
 	$global:LogFolder = $LogFolderName + "\" + $LogSubFolder
 }Else{ # Normal case
-	$global:LogRoot = "$env:LOCALAPPDATA\LogCollector\"
+	$global:LogRoot = "$env:LOCALAPPDATA\AutoLog\"
 	$global:LogFolder = $global:LogRoot + $LogSubFolder
 
-	# If 'LogFolder' exists in LogCollector reg, overwrite the $global:LogFolder with the LogFolder in reg.
-	If(Test-Path "$global:LogCollectorParamRegKey"){
-		$RegValues = Get-ItemProperty -Path  $global:LogCollectorParamRegKey -ErrorAction SilentlyContinue
+	# If 'LogFolder' exists in AutoLog reg, overwrite the $global:LogFolder with the LogFolder in reg.
+	If(Test-Path "$global:AutoLogParamRegKey"){
+		$RegValues = Get-ItemProperty -Path  $global:AutoLogParamRegKey -ErrorAction SilentlyContinue
 		If($RegValues -ne $Null){
 			If($($RegValues.LogFolder)){	#_# fix to avoid LogFolder=''
-				LogDebug "Found LogFolder in LogCollector reg. Set it to LogFolder"
+				LogDebug "Found LogFolder in AutoLog reg. Set it to LogFolder"
 				$global:LogRoot = Split-Path $($RegValues.LogFolder) -Parent
 				$global:LogFolder = $RegValues.LogFolder
 			}
@@ -13403,7 +13717,7 @@ If($global:BoundParameters.ContainsKey('Start') -and $global:BoundParameters.Con
 	# in case of collecting -SDP only, shorten subfolder to SDP_<specialty>
 	if (($MyInvocation.BoundParameters.keys[0] -eq "SDP") -and ($global:BoundParameters.Count -le 2)) {
 		$SDPcombi = ([string]::Concat($SDP)).replace(',','_') # $SDP is string array
-		$global:LogFolder = "$env:LOCALAPPDATA\LogColletor" + '\SDP_' + $SDPcombi
+		$global:LogFolder = "$env:LOCALAPPDATA\AutoLog" + '\SDP_' + $SDPcombi
 	}
 }
 If((IsTraceOrDataCollection)){
@@ -13416,7 +13730,7 @@ $global:PrefixTime	= $global:LogFolder + "\" + $global:LogPrefix
 # Error log
 $global:ErrorLogFile = "$global:LogFolder\$($LogPrefix)_Log-Warn-Err-Info.txt"
 $global:ErrorVariableFile = "$global:LogFolder\$($LogPrefix)_ErrorVariable.txt"
-$global:TempCommandErrorFile = "$global:LogFolder\$($LogPrefix)Command-Error.txt" #"$env:TMP\LogCollector-Command-Error.txt"
+$global:TempCommandErrorFile = "$global:LogFolder\$($LogPrefix)Command-Error.txt" #"$env:TMP\AutoLog-Command-Error.txt"
 
 # Output log - used for transcription
 $global:TranscriptLogFile = "$global:LogFolder\$($LogPrefix)_Log-transcript.txt"
@@ -13467,7 +13781,7 @@ If((IsTraceOrDataCollection)){
 		# Log PS window type
 		[string]$PSMode = ($ExecutionContext.SessionState.LanguageMode)
 		If($Host.Name -match "ISE"){ LogInfoFile "$global:ScriptName v$global:TSSverDate script execution is attempted in 'PowerShell ISE' window ($($Host.Name))  PSMode: $PSMode"} else { LogInfoFile "$global:ScriptName v$global:TSSverDate script execution is running in regular 'PowerShell' window ($($Host.Name)) PSMode: $PSMode"}
-		#LogInfo "... running LogCollector v$global:TSSverDate on OS: $global:OSVersion with PS version: $($PSVersionTable.PSVersion.Major).$($PSVersionTable.PSVersion.Minor)"
+		#LogInfo "... running AutoLog v$global:TSSverDate on OS: $global:OSVersion with PS version: $($PSVersionTable.PSVersion.Major).$($PSVersionTable.PSVersion.Minor)"
 	}Catch{
 		LogError ("Error happened in Start-Transcript")
 	}
@@ -13492,13 +13806,13 @@ If (( -Not $noUpdate.IsPresent) -and ($Script:fUpToDate -eq $False) -and ((IsSta
 #> 
 
 #
-# Set $global:EnableCOMDebug to use the value in LogCollector_UEX.psm1
+# Set $global:EnableCOMDebug to use the value in AutoLog_UEX.psm1
 If($EnableCOMDebug.IsPresent){
 	$global:EnableCOMDebug = $EnableCOMDebug
 }
 
 #
-# Set $global:StartAutoLogger to use the value in LogCollector_NET.psm1 and other modules
+# Set $global:StartAutoLogger to use the value in AutoLog_NET.psm1 and other modules
 If($StartAutoLogger.IsPresent){
 	$global:StartAutoLogger = $StartAutoLogger
 }
@@ -13518,7 +13832,7 @@ else {
 # Executing external PS script and exiting
 #
 If([string]::IsNullOrEmpty($ExternalScript)) {			
-	write-debug "LogCollector started without providing external script"}
+	write-debug "AutoLog started without providing external script"}
 else
 {
 	$ScriptPath = Split-Path $MyInvocation.InvocationName 
@@ -13826,7 +14140,7 @@ If((IsStart) -or $StartAutoLogger.IsPresent -or $Stop.IsPresent -or !([string]::
 		$global:ARM = $true
 	}
 
-	# add LogCollector Binary folders (\BIN***, \BIN) to $Env:Path #we#
+	# add AutoLog Binary folders (\BIN***, \BIN) to $Env:Path #we#
 	foreach ($sub in @("bin$Global:ProcArch", "bin")){
 		Add-path (Join-Path -Path $(Split-Path $MyInvocation.MyCommand.Path -Parent) -ChildPath $sub)
 	}
@@ -13898,15 +14212,15 @@ $Script:UsePartnerTTD = $False
 $Script:fInRecovery = $False
 $Script:fPreparationCompleted = $False
 $script:StopAutologger = $False
-$Script:PurgeTaskName = "LogCollector Purge Task"
-$Script:PurgeTaskNameForAutologger = "LogCollector Purge Task for AutoLogger"
+$Script:PurgeTaskName = "AutoLog Purge Task"
+$Script:PurgeTaskNameForAutologger = "AutoLog Purge Task for AutoLogger"
 $Script:IsCrashInProgress = $False
 
 # Collections
 $script:ETWPropertyList = New-Object 'System.Collections.Generic.List[Object]'
 $CommandPropertyList = New-Object 'System.Collections.Generic.List[Object]'
 $globalTraceCatalog = New-Object 'System.Collections.Generic.List[Object]'
-$LogCollector = New-Object 'System.Collections.Generic.List[Object]'
+$AutoLog = New-Object 'System.Collections.Generic.List[Object]'
 $TraceDefinitionList = New-Object 'System.Collections.Generic.List[Object]'
 $StoppedTraceList = New-Object 'System.Collections.Generic.List[Object]'
 $script:RunningScenarioObjectList = New-Object 'System.Collections.Generic.List[Object]'
@@ -13980,7 +14294,7 @@ $AutoLoggerPrefix = 'autosession\'
 $AutoLoggerBaseKey = 'HKLM:\System\CurrentControlSet\Control\WMI\AutoLogger\'
 
 # Batch file
-$BatFileName = "$global:LogFolder\LogCollector.cmd"
+$BatFileName = "$global:LogFolder\AutoLog.cmd"
 $StartAutoLoggerBatFileName = "$AutoLoggerLogFolder\StartAutoLogger.cmd"
 $StopAutoLoggerBatFileName = "$AutoLoggerLogFolder\StopAutoLogger.cmd"
 
@@ -14642,8 +14956,8 @@ If($Scenario.Count -ne 0 -and !$Stop.IsPresent){
 		$Scenario_ETWTracingSwitchesStatus = Get-Variable $ScenarioTraceSetName -ValueOnly -ErrorAction Ignore
 		If($Scenario_ETWTracingSwitchesStatus -eq $Null){
 			LogError "Invalid scenario name $ScenarioName was specified."
-			Write-Host "=> Run `'.\LogCollector.ps1 -ListSupportedScenario`' to see available scenario names." -ForegroundColor Yellow
-			Write-Host " and Please also run '.\LogCollector.ps1 -Stop' once after such error, in order to cleanup previous failed TSS attempts." -ForegroundColor  Cyan	#we# added to avoid Perfmon errors in next run
+			Write-Host "=> Run `'.\AutoLog.ps1 -ListSupportedScenario`' to see available scenario names." -ForegroundColor Yellow
+			Write-Host " and Please also run '.\AutoLog.ps1 -Stop' once after such error, in order to cleanup previous failed TSS attempts." -ForegroundColor  Cyan	#we# added to avoid Perfmon errors in next run
 			CleanUpAndExit
 		}
 
@@ -14800,7 +15114,7 @@ If($global:BoundParameters.ContainsKey('noSettingList')){
 # Issue#321
 # For Server Core, or when running in Remote PSsession, add noVideo and noPSR so that -Video and -PSR will be removed later.
 If(($global:IsServerCore) -or ($global:BoundParameters.ContainsKey('RemoteRun'))){ 
-	#LogInfo "LogCollector is running on Server Core or in Remote PSsession. Adding -noVideo and -noPSR to script parameter"
+	#LogInfo "AutoLog is running on Server Core or in Remote PSsession. Adding -noVideo and -noPSR to script parameter"
 	$noSwichForServerCore = @(
 		'noVideo'
 		'noPSR'
@@ -14860,7 +15174,7 @@ ForEach($noCommandSwitch in $noSwitchList){
 	}
 	
 If((IsStart) -or $Stop.IsPresent){
-	#LogInfo "LogCollector will run with below parameters."
+	#LogInfo "AutoLog will run with below parameters."
 	ForEach($Parameter in $global:ParameterArray){
 		$ParameterString = $ParameterString + ' ' + $Parameter
 	}
@@ -14915,6 +15229,9 @@ Try{
 	Switch($global:ParameterArray[0]){
 		'CollectLog'{
 			ProcessCollectLog
+		}
+		'Help'{
+			ProcessHelp
 		}
 		default{
 			ProcessCollectLog

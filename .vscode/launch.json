@@ -9,7 +9,7 @@
             "type": "PowerShell",
             "request": "launch",
             "script": "${file}",
-            "args": ["-CollectLog Basi,SEC_Defender -DefenderDurInMin 1 -NewSession"],
+            "args": ["-CollectLog Defender -DefenderDurInMin 1 -NewSession"],
             "cwd": "${file}"
         }
     ]
