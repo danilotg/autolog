@@ -2131,8 +2131,6 @@ function global:FwGetQwinsta {
 
 function global:FwGetRegHives {
 	param(
-#	   [Parameter(Mandatory=$False)]
-#	   [String]$HiveList,
 		[Parameter(Mandatory=$False)]
 		[String]$TssPhase = $global:TssPhase,				# _Start_ or _Stop_
 		[Parameter(Mandatory=$False)]
@@ -2711,6 +2709,10 @@ function global:CollectFullLog {
 		Return
 	}
 
+	# Basic registry keys
+	LogInfo "[$LogPrefix] Exporting registry hives"
+	FwGetRegHives
+
 	Try{
 		$IsServerSKU = (Get-CimInstance -Class CIM_OperatingSystem -ErrorAction Stop).Caption -like "*Server*"
 	}Catch{
@@ -2862,9 +2864,6 @@ Function global:FwGet-basic-system-info{
 	Get-ComputerInfo | Out-File -Append "$BasicLogFolder\msinfo32.txt"
 	LogInfo "[$($MyInvocation.MyCommand.Name)] Running Get-ComputerInfo..."
 	
-	# Basic registry keys
-	LogInfo "[$LogPrefix] Exporting registry hives"
-	FwGetRegHives _Stop_
 	LogInfo "[$LogPrefix] Exporting recovery registry keys"
 	$RecoveryKeys = @(
 		('HKLM:System\CurrentControlSet\Control\CrashControl', "$BasicLogFolder\_Reg_CrashControl.txt"),
@@ -7605,7 +7604,6 @@ Function FixUpPerfProperty{
 	}Else{
 		LogError "Failed to convert English counter name to local counter name."
 		LogInfo " ..collecting registry hives for troubleshooting this PerfMon issue"
-		FwGetRegHives _Stop_
 		LogInfo "=> Please check $global:ErrorLogFile" "Magenta"
 		LogInfo "`nTo avoid this error, run AutoLog again with appended switch -noPerfmon" "Cyan"
 		CleanUpandExit
