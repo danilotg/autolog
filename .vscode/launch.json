@@ -9,7 +9,7 @@
             "type": "PowerShell",
             "request": "launch",
             "script": "${file}",
-            "args": ["-CollectLog Defender -DefenderDurInMin 1 -NewSession"],
+            "args": ["-CollectLog Full -NewSession"],
             "cwd": "${file}"
         }
     ]
