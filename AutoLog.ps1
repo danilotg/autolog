@@ -20,14 +20,9 @@ Param (
 	[switch]$Defender,
 	[Parameter(ParameterSetName='Help', Position=0)]
 	[Switch]$Help,
-#region ----- DND POD providers -----
-	[switch]$DND_CBS,
-	[switch]$DND_CodeIntegrity,
-	[switch]$DND_PNP,
-	[switch]$DND_Servicing,
 #endregion ----- DND POD providers -----
 #region ----- SEC POD providers -----
-	[Int]$DefenderDurInMin,
+	[Int]$DefenderDurInMin=0,
 #endregion ----- SEC POD providers -----
 	[switch]$DebugMode,
 	[Switch]$NewSession,
@@ -1579,15 +1574,6 @@ Function global:FwResetAllEventLogs{
 }
 
 function global:FwAddEvtLog {
-	<#
-	.SYNOPSIS
-		Adds new Event Log to the list of Event Logs to be collected
-	.DESCRIPTION
-		Adds new Event Log item to the list of Event Logs to be collected at TssPhase
-	.EXAMPLE
-		FWaddEvtLog @("Microsoft-Windows-PowerShell/Admin", "Microsoft-Windows-PowerShell/Operational")
-		POD/module specific groups of EvtLogs can be defined in <_POD.psm1> #region groups of Eventlogs
-	#>
 	param(
 		[Parameter(Mandatory=$True)]
 		[String[]]$AddToEvtLogNames,# which Evt name(s) to add to $global:EvtLogNames
@@ -1595,9 +1581,7 @@ function global:FwAddEvtLog {
 		[String]$TssPhase = $global:TssPhase	# _Start_ or _Stop_
 	)
 	EnterFunc ($MyInvocation.MyCommand.Name + " at $TssPhase")
-	LogInfo "[$($MyInvocation.MyCommand.Name)] adding Eventlog $AddToEvtLogNames at $TssPhase"
 	$global:EvtLogNames += $AddToEvtLogNames
-	#LogInfoFile "___ after global:FWaddEvtLog, list: $global:EvtLogNames"
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
@@ -3123,7 +3107,7 @@ Function global:Basic-Uexinfo{
 	)
 	EnterFunc $MyInvocation.MyCommand.Name
 	If($FullBasic){ $B_mode="Full" }else{$B_mode="Basic"}
-	$LogPrefix = $B_mode + "Log-Ui"
+	$LogPrefix = $B_mode + "Log-Uix"
 	#------- UEX --------#
 	LogInfo ("[$LogPrefix] Gathering UEX info")
 
@@ -6553,98 +6537,35 @@ Function StartPerfLog{
 
 Function CompressShow{
 	EnterFunc $MyInvocation.MyCommand.Name
-	# Fix(#224)
+
 	if (!($global:ParameterArray -contains 'noZip') -and !($global:ParameterArray -contains 'noCab')) {  # skip compressing results if -noZip or -noCab
+			
+		$LongZipFileName = (Split-Path $global:LogFolder -Leaf) + ".zip"
 
-		If(!$global:BoundParameters.ContainsKey('Discard')){
-			# 1. In case of scenario trace, create Zip file suffix using the scenario name.
-			If($Script:RunningScenarioObjectList.Count -ne 0){
-				$script:LogZipFileSuffixScn = $Script:RunningScenarioObjectList.ScenarioName
-				$script:LogZipFileSuffix = $script:LogZipFileSuffixScn
-			}ElseIf(![String]::IsNullOrEmpty($Scenario)){ # Case for -StartNoWait + no trace in scenario
-				$Token = $Scenario -split ','
-				ForEach($ScenarioName in $Token){
-					$script:LogZipFileSuffix = $ScenarioName + '_'
-				}
-				$script:LogZipFileSuffix = $script:LogZipFileSuffix  -replace "_$",""
-			}
-
-			# 2. In case of -AddDescription, ask user to input brief description and set it to $Description
-			If($global:ParameterArray -Contains 'AddDescription' -and !($global:ParameterArray -Contains 'noAsk')){
-				While($True){
-					Write-Host ""
-					LogInfo "Enter a brief description of the issue (Press Enter when done)"
-					Write-Host "Example:"
-					Write-Host "  - Good"
-					Write-Host "  - Error case"
-					Write-Host "  - Failing Repro"
-					Write-Host '=> Special characters/symbols(#<>*_/\{}$+%`|=@\") are not allowed to use.'
-					FwPlaySound
-					$Description = Read-Host "Description"
-					If($Description.Length -gt 40 -or $Description.Length -eq 0){
-						LogInfo "Enter problem description within 40 characters"
-					}ElseIf($Description -match '[#<>\*_\/\\\{\}\$\?\+%`\|=@"]'){
-						LogInfo "Below symbols are not allowed. Please enter the description again." 
-						LogInfo '=> Illegal characters/symbols: #<>*_/\{}$+%`|=@\"' "Yellow"
-					}Else{
-						Break
-					}
-				}
-				# Replace space(' ') with dash('-')
-				$Description = $Description -replace (' ','-')
-			}
-
-			$LongZipFileName = (Split-Path $global:LogFolder -Leaf) + ".zip"
-
-			# -Scenario case. Append scenario name.
-			If(![string]::IsNullOrEmpty($script:LogZipFileSuffix)){ 
-				$LongZipFileName = $LongZipFileName -Replace(".zip", "$script:LogZipFileSuffix.zip")
-			# -CollectLog case. Append collected log component name.
-			}ElseIf($global:ParameterArray -contains 'CollectLog'){
-				$LogNames = $CollectLog -replace (",","-")
-				$CollectLogDescription = "Log"
-				ForEach($ComponentName in $CollectLog){
+		If($global:ParameterArray -contains 'CollectLog'){
+			$CollectLogDescription = "Log"
+			ForEach($ComponentName in $CollectLog){
+				If($global:DefenderDurInMin -ne 0){
+					$CollectLogDescription = $CollectLogDescription + '-' + $ComponentName + $global:DefenderDurInMin + "Min"
+				}Else{
 					$CollectLogDescription = $CollectLogDescription + '-' + $ComponentName
 				}
-				$LongZipFileName = $LongZipFileName -Replace(".zip", "$CollectLogDescription.zip")
 			}
-
-			# -Xray case. Append xray_INFO or xray_ISSUES-FOUND
-			If($global:ParameterArray -Contains 'xray'){
-				$XrayInfoFile =  Get-ChildItem $global:LogFolder "xray_INFO*" -Recurse
-				$XrayIssueFoundFile = Get-ChildItem $global:LogFolder "xray_ISSUES-FOUND*" -Recurse
-				If($XrayInfoFile.Count -ne 0){
-					$XrayDescription = "_xray_INFO"
-				}
-				If($XrayIssueFoundFile.Count -ne 0){
-					$XrayDescription = "_xray_ISSUES-FOUND"
-				}
-				LogDebug "XrayInfoFile count = $($XrayInfoFile.Count) $XrayIssueFoundFile count = $($XrayIssueFoundFile.Count)"
-				$LongZipFileName = $LongZipFileName -Replace(".zip", "$XrayDescription.zip")
-			}
-
-			# -AddDescription case. Append brief description of the issue.
-			If($global:ParameterArray -Contains 'AddDescription' -and !($global:ParameterArray -Contains 'noAsk')){
-				$LongZipFileName = $LongZipFileName -Replace(".zip", "-$Description.zip")
-			}
-
-			# 3. Create a full path of zip file
-			$zipDestinationPath = (Split-Path $global:LogFolder -Parent) + "\" + $LongZipFileName
-			LogDebug "LogZipFileSuffix = $script:LogZipFileSuffix"
-			LogDebug "zipDestinationPath = $zipDestinationPath"
-
-			# 4. If the created file path already exists(this could happen -stop without -AddDescription), rename the existing file.
-			If(Test-Path $zipDestinationPath){
-				# Case where destination zip file already exists.
-				$DateSuffix = "$(Get-Date -f yyyy-MM-dd.HHmm.ss)"  
-				$BackupZipPath = $zipDestinationPath -replace (".zip", "$DateSuffix.zip")
-				LogInfo "Moving $zipDestinationPath to $BackupZipPath"
-				Move-Item $zipDestinationPath $BackupZipPath -ErrorAction SilentlyContinue
-			}
+			$LongZipFileName = $LongZipFileName -Replace(".zip", "$CollectLogDescription.zip")
 		}
-		Write-Host ""
 
-		# 5. Before compressing log folder, close transcript.
+		$zipDestinationPath = (Split-Path $global:LogFolder -Parent) + "\" + $LongZipFileName
+		LogDebug "LogZipFileSuffix = $script:LogZipFileSuffix"
+		LogDebug "zipDestinationPath = $zipDestinationPath"
+
+		If(Test-Path $zipDestinationPath){
+			# Case where destination zip file already exists.
+			$DateSuffix = "$(Get-Date -f yyyy-MM-dd.HHmm.ss)"  
+			$BackupZipPath = $zipDestinationPath -replace (".zip", "$DateSuffix.zip")
+			LogInfo "Moving $zipDestinationPath to $BackupZipPath"
+			Move-Item $zipDestinationPath $BackupZipPath -ErrorAction SilentlyContinue
+		}
+
 		$TimeUTC = $((Get-Date).ToUniversalTime().ToString("yyyy-MM-dd_HH:mm:ss"))
 		LogInfoFile "=========== End of AutoLog Data collection: $TimeUTC UTC ==========="
 		Close-Transcript -ShowMsg
@@ -6674,24 +6595,7 @@ Function CompressShow{
 				LogInfo "[$MyInvocation.MyCommand.Name] Skipping compressing folder as an error happened in stop."
 			}
 
-			# 8. In case of Remoting, copy zip file to file share.
-			If((IsStart) -and $global:IsRemoting -and $global:BoundParameters.ContainsKey('RemoteLogFolder')){
-				$RemoteLogFolder = $global:BoundParameters['RemoteLogFolder']
-				LogInfo "[$MyInvocation.MyCommand.Name] Copying $zipDestinationPath to $RemoteLogFolder"
-				Try{
-					Copy-Item $zipDestinationPath $RemoteLogFolder
-				}Catch{
-					LogError "Failed to copy $zipDestinationPath to $RemoteLogFolder"
-				}
-				$zipFileName = [System.IO.Path]::GetFileName($zipDestinationPath)
-				$RemoteZiplogFileName = $RemoteLogFolder + "\" + $zipFileName
-				If(Test-Path $RemoteZiplogFileName){
-					Write-Host "==> Please send all zip files in $RemoteLogFolder to our upload site." -ForegroundColor Cyan
-					$IsCopyToRemoteShareSucceeded = $True
-				}Else{
-					LogInfo "==> Please send $zipDestinationPath to our upload site." -ForegroundColor Cyan
-				}
-			}ElseIf($Script:StopInError){
+			If($Script:StopInError){
 				LogWarn "ERROR(s) happened during stopping traces."
 				LogInfo "==> Please send below log files to our upload site." "Cyan"
 				LogInfo "	- All log files in $global:LogFolder"
@@ -6701,7 +6605,6 @@ Function CompressShow{
 				LogInfo "[$($MyInvocation.MyCommand.Name)] Please send $zipDestinationPath to our MS upload site."
 			}
 		}
-		# 9. Delete original log folder to save free space.
 		If(!$Script:StopInError){
 			LogDebug "Deleting $global:LogFolder"
 			Try{
