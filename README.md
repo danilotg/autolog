@@ -1,2 +1,2 @@
-# logcollector
-Automated log collector for cloud solutions
+# AutoLog
+Log automation for cloud solutions
