@@ -1179,7 +1179,7 @@ function global:FwAddRegItem {
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-function global:FwGetRegList {
+function global:GetRegList {
 	<# 
 	.SYNOPSIS 
 		Bulk collection of Registry keys at Collect Phase
@@ -1187,7 +1187,7 @@ function global:FwGetRegList {
 		It will process FwExportRegToOneFile for each RegKey module at phase TssPhase.
 		You can add Registry keys to this list using function FWaddRegItem
 	.EXAMPLE
-		FWgetRegList _Stop_
+		GetRegList _Stop_
 	#>
 	param(
 		[Parameter(Mandatory=$False)]
@@ -1217,15 +1217,15 @@ function global:FwGetRegList {
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function global:FwExportEventLog{
-	#we# ToDo: - better consolidate FwExportSingleEventLog and FwExportEventLog into one function
+Function global:ExportEventLog{
+	#we# ToDo: - better consolidate FwExportSingleEventLog and ExportEventLog into one function
 	#		   - currently Get-Winevent produces different results on Win11 and Srv2022, maybe related to bug #35871962 - Problems with PowerShell EventLogReader command ..
 	<# .SYNOPSIS
-		Exports one or more EventLogs in evtx format and calls FwExportEventLogWithTXTFormat (unless -noEventConvert)
+		Exports one or more EventLogs in evtx format and calls ExportEventLogWithTXTFormat (unless -noEventConvert)
 	.DESCRIPTION
-		global:FwExportEventLog expects 2 mandatory parameters: $EventLogArray and 2 optional parameters $ExportFolder, $NoExportWithText
+		global:ExportEventLog expects 2 mandatory parameters: $EventLogArray and 2 optional parameters $ExportFolder, $NoExportWithText
 	.EXAMPLE
-		FwExportEventLog @("Microsoft-Windows-NTFS/Operational","Microsoft-Windows-NTFS/WHC") $global:LogFolder
+		ExportEventLog @("Microsoft-Windows-NTFS/Operational","Microsoft-Windows-NTFS/WHC") $global:LogFolder
 	#>
 	Param(
 		[Parameter(Mandatory=$True)]
@@ -1273,32 +1273,32 @@ Function global:FwExportEventLog{
 			"wevtutil epl `"$EventLog`" `"$ExportFolder\$script:BasicSubFolder\$env:computerName-$EventLogFileName.evtx`"",
 			"wevtutil al `"$ExportFolder\$script:BasicSubFolder\$env:computerName-$EventLogFileName.evtx`" /l:en-us"
 			)
-			RunCommands "FwExportEventLog" $Commands -ThrowException:$False -ShowMessage:$False -ShowError:$True
+			RunCommands "ExportEventLog" $Commands -ThrowException:$False -ShowMessage:$False -ShowError:$True
 		}
 		
 		LogInfo "[$($MyInvocation.MyCommand.Name)] Exporting $EventLog"
 		
 		If (($EventLog -ne "Security") -and ($DaysBack -ne 0)) {
-			FwExportEventLogWithTXTFormat $EventLog "$ExportFolder\$script:BasicSubFolder" -DaysBack $DaysBack
+			ExportEventLogWithTXTFormat $EventLog "$ExportFolder\$script:BasicSubFolder" -DaysBack $DaysBack
 		}
 	}
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function global:FwExportEventLogWithTXTFormat{
+Function global:ExportEventLogWithTXTFormat{
 	<#
 	.SYNOPSIS
 		Export event log with text format
 	.DESCRIPTION
-		global:FwExportEventLogWithTXTFormat expects 2 parameters: $EventLogName, $ExportFolder
-		This function is also called from FwExportEventLog.
+		global:ExportEventLogWithTXTFormat expects 2 parameters: $EventLogName, $ExportFolder
+		This function is also called from ExportEventLog.
 	.PARAMETER EventLogName
 	 Event log name to be converted to txt file.
 	.PARAMETER ExportFolder
 	 Folder name converted event log is stored.
 	.EXAMPLE
 		To export event with text format:
-		global:FwExportEventLogWithTXTFormat "Microsoft-Windows-TWinUI/Operational" "%localappdata%\AutoLog\XXX"
+		global:ExportEventLogWithTXTFormat "Microsoft-Windows-TWinUI/Operational" "%localappdata%\AutoLog\XXX"
 	.NOTES
 		Date:   21.04.2021
 	#>
@@ -1330,7 +1330,7 @@ Function global:FwExportEventLogWithTXTFormat{
 	#we# $Command = "Get-WinEvent -Oldest -LogName `"$EventLogName`" -ErrorAction Ignore | Select-Object LevelDisplayName,TimeCreated,ProviderName,ID,UserId,Message | Export-Csv -path $tmpEventFile -UseCulture -NoTypeInformation -Encoding utf8"
 	Try{
 		LogInfo "[EventLog] Converting $EventLogName to *.txt format (last $DaysBack days)."
-		$durationCSV = Measure-Command { RunCommands "FwExportEventLogWithTXTFormat" $Command -ThrowException:$True -ShowMessage:$False -ShowError:$True }
+		$durationCSV = Measure-Command { RunCommands "ExportEventLogWithTXTFormat" $Command -ThrowException:$True -ShowMessage:$False -ShowError:$True }
 	}Catch{
 		LogException "Error happened in Get-WinEvent for $EventLogName" $_
 		Return
@@ -1601,7 +1601,7 @@ function global:FwAddEvtLog {
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-function global:FwGetEvtLogList {
+function global:GetEvtLogList {
 	param(
 		[Parameter(Mandatory=$False)]
 		[String]$TssPhase = $global:TssPhase				# _Start_ or _Stop_
@@ -1612,7 +1612,7 @@ function global:FwGetEvtLogList {
 		LogInfoFile "Eventlog List at $TssPhase : $global:EvtLogNames"
 		$global:EvtLogNames = $global:EvtLogNames |sort -Unique
 		LogInfoFile "___ UniqueEvtList at $TssPhase : $global:EvtLogNames"
-		FwExportEventLog $global:EvtLogNames $global:LogFolder
+		ExportEventLog $global:EvtLogNames $global:LogFolder
 		LogInfoFile "___ done all Eventlog collections"
 	}
 	EndFunc $MyInvocation.MyCommand.Name
@@ -2598,7 +2598,7 @@ function global:CollectBasicLog {
 		$script:BasicSubFolder = "BasicLog$LogSuffix-$Stage"
 	}
 	$BasicLogFolder = $global:LogFolder + "\" + $script:BasicSubFolder
-	$SetupLogFolder = "$BasicLogFolder\DnD-Setup"
+	$SetupLogFolder = "$BasicLogFolder\SetupLogs"
 	Try{
 		FwCreateLogFolder $BasicLogFolder
 		FwCreateLogFolder $SetupLogFolder
@@ -2606,15 +2606,15 @@ function global:CollectBasicLog {
 		LogError ("Unable to create log folder. " + $_.Exception.Message)
 		Return
 	}
-	FwGet-OSversion-Build
-	FwGet-basic-system-info 
-	FwGet-basic-setup-info
-	FwGet-basic-networking-info
-	FwGet-basic-UEX-info
-	FwGet-basic-Storage-info
-	FWgetRegList $global:TssPhase
+	OSversion-Build
+	Basic-Systeminfo 
+	Basic-Setupinfo
+	Basic-Netwinfo
+	Basic-Uexinfo
+	Basic-Storinfo
+	GetRegList $global:TssPhase
 	FWaddEvtLog @("System", "Application")
-	FWgetEvtLogList $global:TssPhase
+	GetEvtLogList $global:TssPhase
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
@@ -2645,7 +2645,7 @@ function global:CollectFullLog {
 	}
 	$BasicLogFolder = $global:LogFolder + "\" + $script:BasicSubFolder
 	$EventLogFolder = "$BasicLogFolder\EventLogs"
-	$SetupLogFolder = "$BasicLogFolder\DnD-Setup"
+	$SetupLogFolder = "$BasicLogFolder\SetupLogs"
 	Try{
 		FwCreateLogFolder $BasicLogFolder
 		FwCreateLogFolder $EventLogFolder
@@ -2665,19 +2665,19 @@ function global:CollectFullLog {
 		$IsServerSKU = $False
 	}
 
-	FwGet-OSversion-Build
-	FwGet-basic-system-info -FullBasic
+	OSversion-Build
+	Basic-Systeminfo -FullBasic
 	FWaddEvtLog @("System", "Application")
-	FwGet-basic-setup-info -FullBasic
-	FwGet-basic-networking-info -FullBasic
-	FwGet-basic-UEX-info -FullBasic
-	FwGet-basic-Storage-info -FullBasic
-	FWgetRegList $global:TssPhase
-	FWgetEvtLogList $global:TssPhase
+	Basic-Setupinfo -FullBasic
+	Basic-Netwinfo -FullBasic
+	Basic-Uexinfo -FullBasic
+	Basic-Storinfo -FullBasic
+	GetRegList $global:TssPhase
+	GetEvtLogList $global:TssPhase
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function global:FwGet-OSversion-Build{
+Function global:OSversion-Build{
 	EnterFunc $MyInvocation.MyCommand.Name
 	LogInfo "[$($MyInvocation.MyCommand.Name)] Obtaining OS version with build number" # Note: #!# LogInfoFile would fail at this stage as $LogFolder does not exist
 	$OutFile = $BasicLogFolder + "\OSVersion-Build.txt"
@@ -2690,7 +2690,7 @@ Function global:FwGet-OSversion-Build{
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function global:FwGet-basic-system-info{
+Function global:Basic-Systeminfo{
 	param(
 		[String]$Stage=$Null,	# "Before-Repro|After-Repro"
 		[switch]$FullBasic		# select -FullBasic to collect Full Basic data
@@ -2890,7 +2890,7 @@ Function global:FwGet-basic-system-info{
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function global:FwGet-basic-setup-info{
+Function global:Basic-Setupinfo{
 	param(
 		[String]$Stage=$Null,	# "Before-Repro|After-Repro"
 		[switch]$FullBasic		# select -FullBasic to collect Full Basic data
@@ -2948,7 +2948,7 @@ Function global:FwGet-basic-setup-info{
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function global:FwGet-basic-networking-info{
+Function global:Basic-Netwinfo{
 	param(
 		[String]$Stage=$Null,	# "Before-Repro|After-Repro"
 		[switch]$FullBasic		# select -FullBasic to collect Full Basic data
@@ -3116,7 +3116,7 @@ Function global:FwGet-basic-networking-info{
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function global:FwGet-basic-UEX-info{
+Function global:Basic-Uexinfo{
 	param(
 		[String]$Stage=$Null,	# "Before-Repro|After-Repro"
 		[switch]$FullBasic		# select -FullBasic to collect Full Basic data
@@ -3138,14 +3138,14 @@ Function global:FwGet-basic-UEX-info{
 		If($OSBuild -le 14393){
 			$MDMCmdLine = "MdmDiagnosticsTool.exe $BasicLogFolder\MdmDiagnosticsTool.xml | Out-Null"
 		}Else{
-			$MDMCmdLine = "MdmDiagnosticsTool.exe -out $BasicLogFolder\MDM  | Out-Null"
+			$MDMCmdLine = "MdmDiagnosticsTool.exe -out $BasicLogFolder\MDMLogs  | Out-Null"
 		}
 		RunCommands $LogPrefix $MDMCmdLine -ThrowException:$False -ShowMessage:$True
 	}
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function global:FwGet-basic-Storage-info{
+Function global:Basic-Storinfo{
 	param(
 		[String]$Stage=$Null,	# "Before-Repro|After-Repro"
 		[switch]$FullBasic		# select -FullBasic to collect Full Basic data
@@ -3198,7 +3198,7 @@ Function global:FwCollect_BasicLog{
 	}
 	$BasicLogFolder = $global:LogFolder + "\" + $script:BasicSubFolder
 	$EventLogFolder = "$BasicLogFolder\EventLogs"
-	$SetupLogFolder = "$BasicLogFolder\DnD-Setup"
+	$SetupLogFolder = "$BasicLogFolder\SetupLogs"
 	Try{
 		FwCreateLogFolder $BasicLogFolder
 		FwCreateLogFolder $EventLogFolder
@@ -3215,15 +3215,15 @@ Function global:FwCollect_BasicLog{
 		$IsServerSKU = $False
 	}
 
-	FwGet-OSversion-Build
-	FwGet-basic-system-info -FullBasic
+	OSversion-Build
+	Basic-Systeminfo -FullBasic
 	FWaddEvtLog @("System", "Application")	#we# issue#405
-	FwGet-basic-setup-info -FullBasic
-	FwGet-basic-networking-info -FullBasic
-	FwGet-basic-UEX-info -FullBasic
-	FwGet-basic-Storage-info -FullBasic
-	FWgetRegList $global:TssPhase
-	FWgetEvtLogList $global:TssPhase
+	Basic-Setupinfo -FullBasic
+	Basic-Netwinfo -FullBasic
+	Basic-Uexinfo -FullBasic
+	Basic-Storinfo -FullBasic
+	GetRegList $global:TssPhase
+	GetEvtLogList $global:TssPhase
 
 	if ($FullBasic) {
 		FwWaitForProcess $global:msinfo32NFO 300
@@ -3249,7 +3249,7 @@ Function global:FwCollect_MiniBasicLog{
 		#$BasicLogFolder = "$global:LogFolder\BasicLog_Mini$LogSuffix-$Stage"	#we# 
 	}
 	$BasicLogFolder = $global:LogFolder + "\" + $script:BasicSubFolder
-	$SetupLogFolder = "$BasicLogFolder\DnD-Setup"
+	$SetupLogFolder = "$BasicLogFolder\SetupLogs"
 	Try{
 		FwCreateLogFolder $BasicLogFolder
 		FwCreateLogFolder $SetupLogFolder
@@ -3258,15 +3258,15 @@ Function global:FwCollect_MiniBasicLog{
 		Return
 	}
 
-	FwGet-OSversion-Build
-	FwGet-basic-system-info 
+	OSversion-Build
+	Basic-Systeminfo 
 	FWaddEvtLog @("System", "Application") #we# issue#405
-	FwGet-basic-setup-info
-	FwGet-basic-networking-info
-	FwGet-basic-UEX-info
-	FwGet-basic-Storage-info
-	FWgetRegList $global:TssPhase
-	FWgetEvtLogList $global:TssPhase
+	Basic-Setupinfo
+	Basic-Netwinfo
+	Basic-Uexinfo
+	Basic-Storinfo
+	GetRegList $global:TssPhase
+	GetEvtLogList $global:TssPhase
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
@@ -6369,8 +6369,8 @@ Function StartTraces{
 
 	# Call common START task
 	# Run collection of RegKey and Eventlogs before repro, defined by POD calls to FWaddRegItem and FWaddEvtLog _Start_
-	if ($global:RegKeysModules.count -gt 0) { FWgetRegList $global:TssPhase }
-	if ($global:EvtLogNames.count -gt 0) { FWgetEvtLogList $global:TssPhase }
+	if ($global:RegKeysModules.count -gt 0) { GetRegList $global:TssPhase }
+	if ($global:EvtLogNames.count -gt 0) { GetEvtLogList $global:TssPhase }
 	#$Script:RunningScenarioObjectList = GetRunningScenarioTrace
 	If(($Scenario.Count -ne 0) -and [string]::IsNullOrEmpty($CommonTask)){
 		ForEach($ScenarioName in $Scenario){
@@ -6551,7 +6551,7 @@ Function StartPerfLog{
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
-Function CompressLogIfNeededAndShow{
+Function CompressShow{
 	EnterFunc $MyInvocation.MyCommand.Name
 	# Fix(#224)
 	if (!($global:ParameterArray -contains 'noZip') -and !($global:ParameterArray -contains 'noCab')) {  # skip compressing results if -noZip or -noCab
@@ -6778,7 +6778,7 @@ Function ShowTraceResult{
 
 	$ErrorTraces = $TraceObjectList | Where-Object{$_.Status -ne $Status -and $_.Status -ne $TraceStatus.NoStopFunction -and $_.Status -ne $TraceStatus.NotSupported}
 	If($ErrorTraces -ne $Null){
-		$Script:StopInError = $True # This will be used in CompressLogIfNeededAndShow()
+		$Script:StopInError = $True # This will be used in CompressShow()
 		LogInfo ('[Error] The following trace(s) failed:')
 		ForEach($TraceObject in $ErrorTraces){
 			$StatusString = ($TraceStatus.GetEnumerator() | Where-Object {$_.Value -eq $TraceObject.Status}).Key
@@ -6888,27 +6888,29 @@ Function ProcessCollectLog{
 		}
 		LogInfoFile "======================== End of Collect =========================="
 	}
-	CompressLogIfNeededAndShow
+	CompressShow
 	CleanUpandExit
 	EndFunc $MyInvocation.MyCommand.Name
 }
 
 Function ProcessHelp {
-	EnterFunc $MyInvocation.MyCommand.Name
 	Try{
-		Write-Output "-Usage:"
-		Write-Output "-----------------------------------------------------------------------------------------------------------------------------------------------------------"
-		Write-Output ".\AutoLog.ps1 -CollectLog Basic                                       - Collect basic logs"
-		Write-Output ".\AutoLog.ps1 -CollectLog Full                                        - Collect full additional logs"
-		Write-Output ".\AutoLog.ps1 -CollectLog Wu                                          - Collect basic logs and Windows Update logs"
-		Write-Output ".\AutoLog.ps1 -CollectLog Defender                                    - Collect basic logs and Defender logs"
-		Write-Output ".\AutoLog.ps1 -CollectLog Defender -DefenderDurinMin <int in minutes> - Collect basic logs, Defender logs and Network traces for the specified duration"
-		Write-Output "----------------------------------------------------------------------------------------------------------------------------------------------------------"
+		Write-Output ""
+		Write-Output "       Usage:"
+		Write-Output ""
+		Write-Output "         .\AutoLog.ps1 -CollectLog <Scenario> <Options> <Duration>"
+		Write-Output ""
+		Write-Output "         .\AutoLog.ps1 -CollectLog Basic                                       - Collect basic logs"
+		Write-Output "         .\AutoLog.ps1 -CollectLog Full                                        - Collect full additional logs"
+		Write-Output "         .\AutoLog.ps1 -CollectLog Wu                                          - Collect basic logs and Windows Update logs"
+		Write-Output "         .\AutoLog.ps1 -CollectLog Defender                                    - Collect basic logs and Defender logs"
+		Write-Output "         .\AutoLog.ps1 -CollectLog Defender -DefenderDurinMin <int in minutes> - Collect basic logs, Defender logs and Network traces for the specified duration"
+		Write-Output ""
+		Write-Output ""
 	}Catch{
 		LogInfo "[$($MyInvocation.MyCommand.Name)] An exception happened in ProcessHelp"
 		CleanUpandExit
 	}
-	EndFunc $MyInvocation.MyCommand.Name
 }
 
 Function CheckParameterCompatibility{
@@ -7681,7 +7683,7 @@ Function ProcessCollectEventLog{
 		}Else{
 			$EventLogList += $EventLogConfiguration.LogName
 		}
-		FwExportEventLog $EventLogList
+		ExportEventLog $EventLogList
 	}
 	EndFunc $MyInvocation.MyCommand.Name
 }
@@ -10282,10 +10284,7 @@ $global:IsISE 			= $Host.Name -match "ISE Host"
 $global:IsRemoteHost 	= $Host.Name -match "RemoteHost"
 $global:IsLiteMode		= IsLiteMode
 $global:RegAvailable = $True
-# below ProgressPreference should only be set if we are running in Azure Serial Console
-If($RemoteRun.IsPresent) {$global:ProgressPreference = "SilentlyContinue"} else {$global:ProgressPreference = "Continue"} #we# test for P2: powershell ( serial console): "Win32 internal error "Access is denied" 0x5 occurred while reading the console output buffer. (#675) 
-
-# Global variables previously (only defined) in _NET.psm1
+If($RemoteRun.IsPresent) {$global:ProgressPreference = "SilentlyContinue"} else {$global:ProgressPreference = "Continue"} 
 $global:Sys32			= $Env:SystemRoot + "\system32"
 $global:PoolmonPath 	= $global:ScriptFolder + "\Bin\Poolmon.exe"
 $global:HandlePath 		= $global:ScriptFolder + "\Bin\Handle.exe"
@@ -10296,6 +10295,7 @@ $global:EvtLogNames = @()
 $global:ScriptFolder
 $global:RunningCollect = "Basic"
 $global:EvtDaysBack=30
+$global:LogRoot = "%LOCALAPPDATA/Autolog%"
 
 # Make sure all *.ps1/.psm1 files are Unblocked 
 Get-ChildItem -Recurse -Path $global:ScriptFolder\*.ps* | Unblock-File -Confirm:$false
@@ -10305,15 +10305,6 @@ If($Stop.IsPresent -or $Status.IsPresent){
 	ReadParameterFromAutoLogReg # This adds params to $global:BoundParameters
 }
 
-# # Version check
-# #If(($OperatingSystemInfo.OSVersion -lt 10) -and !($OperatingSystemInfo.OSVersion -eq 6 -and $OperatingSystemInfo.CurrentBuildHex -ge 9200)){
-# If($OSBuild -le 9200){ #we# OSver is lower then Win2012 
-# 	LogInfo "This script is supported starting with Windows 8.1 or Windows Server 2012 R2" "Cyan"
-# 	Write-Host ("... running on OS: $global:OSVersion with PS version: $($PSVersionTable.PSVersion.Major).$($PSVersionTable.PSVersion.Minor) `n [Beta-phase] ...parts of the script may not work or throw errors running on older OS - NOT tested!") -ForegroundColor Red
-# 	Write-Host ""
-# 	#_# CleanUpandExit #we# uncommenting for now to test with Win7/2008R2 with updated PS version v5
-# }
-
 # Global variables for sub Folder and data locations
 $global:LogPrefix 		= $env:COMPUTERNAME + "_" + "$(Get-Date -f yyMMdd-HHmmss)_" 
 $global:LogSuffix 		= "-$(Get-Date -f yyyy-MM-dd.HHmm.ss)"  
@@ -10322,16 +10313,14 @@ $global:LogSuffix 		= "-$(Get-Date -f yyyy-MM-dd.HHmm.ss)"
 $LogSubFolder = 'AutoLog_' + $env:COMPUTERNAME + "_" + "$(Get-Date -f yyMMdd-HHmmss)_" 
 
 # Log folders
-# 1. If -LogFolderName exists, set it to $global:LogFolder
-# 2. Set default log foldername($global:LogRoot + $LogSubFolder)
-# 3. If 'LogFolder' is saved in AutoLog registry, set it to $global:LogFolder
+#Set default log foldername($global:LogRoot + $LogSubFolder)
 If($global:BoundParameters.ContainsKey('Start') -and $global:BoundParameters.ContainsKey('LogFolderName')){
 	$global:LogRoot = $LogFolderName + "\"
 	$global:LogFolder = $LogFolderName + "\" + $LogSubFolder
-}Else{ # Normal case
+}Else{ 
+	# Normal case
 	$global:LogRoot = "$env:LOCALAPPDATA\AutoLog\"
 	$global:LogFolder = $global:LogRoot + $LogSubFolder
-
 	# If 'LogFolder' exists in AutoLog reg, overwrite the $global:LogFolder with the LogFolder in reg.
 	If(Test-Path "$global:AutoLogParamRegKey"){
 		$RegValues = Get-ItemProperty -Path  $global:AutoLogParamRegKey -ErrorAction SilentlyContinue
@@ -10342,12 +10331,6 @@ If($global:BoundParameters.ContainsKey('Start') -and $global:BoundParameters.Con
 				$global:LogFolder = $RegValues.LogFolder
 			}
 		}
-	}
-
-	# in case of collecting -SDP only, shorten subfolder to SDP_<specialty>
-	if (($MyInvocation.BoundParameters.keys[0] -eq "SDP") -and ($global:BoundParameters.Count -le 2)) {
-		$SDPcombi = ([string]::Concat($SDP)).replace(',','_') # $SDP is string array
-		$global:LogFolder = "$env:LOCALAPPDATA\AutoLog" + '\SDP_' + $SDPcombi
 	}
 }
 If((IsTraceOrDataCollection)){
@@ -10421,35 +10404,17 @@ If((IsTraceOrDataCollection)){
 	}
 }
 
-# #_# checking online for latest public version
-# if (( -Not $noVersionChk.IsPresent) -or ($global:ParameterArray -notcontains 'noVersionChk')){
-# 	If (( -Not $noUpdate.IsPresent) -and ((IsStart) -or $StartAutoLogger.IsPresent -or ![string]::IsNullOrEmpty($StartDiag) -or ![string]::IsNullOrEmpty($CollectLog))) {
-# 		LogInfo "Checking if a new version is available on https://aka.ms/getTSS"
-# 		CheckVersion($global:TssVerDate)
-# 	}
-# }
-<#
-# ToDo: possibly run AutoUpdate in production here (do it while in broad Testing phase)
-If (( -Not $noUpdate.IsPresent) -and ($Script:fUpToDate -eq $False) -and ((IsStart) -or $StartAutoLogger.IsPresent -or ![string]::IsNullOrEmpty($StartDiag) -or ![string]::IsNullOrEmpty($CollectLog))) {
-	UpdateTSS	# skip this step with -noUpdate #_# -> keeping active while beta testing, # -> remove for production
-}
-#> 
-
-#
 # Set $global:EnableCOMDebug to use the value in AutoLog_UEX.psm1
 If($EnableCOMDebug.IsPresent){
 	$global:EnableCOMDebug = $EnableCOMDebug
 }
 
-#
 # Set $global:StartAutoLogger to use the value in AutoLog_NET.psm1 and other modules
 If($StartAutoLogger.IsPresent){
 	$global:StartAutoLogger = $StartAutoLogger
 }
 
-#
 # Get CustomParams
-#
 If($CustomParams.Count -eq 0) {			
 	write-debug ("CustomParams input is not provided")
 	$global:CustomParams = @()
@@ -10460,7 +10425,6 @@ else {
 	}
 
 # Executing external PS script and exiting
-#
 If([string]::IsNullOrEmpty($ExternalScript)) {			
 	write-debug "AutoLog started without providing external script"}
 else
@@ -10710,13 +10674,6 @@ $global:HyperVCounters = @(
 	'\Hyper-V Virtual Switch Processor(*)\*'
 	'\Hyper-V VM Vid Partition(*)\*'
 	'\Hyper-V VM Vid Numa Node(*)\*'
-	#'\Hyper-V Dynamic Memory Integration Service(*)\*'
-	#'\Hyper-V Hypervisor(*)\*'
-	#'\Hyper-V Replica VM(*)\*'
-	#'\Hyper-V Virtual Machine Bus(*)\*'
-	#'\Hyper-V Virtual Machine Health Summary(*)\*'
-	#'\Hyper-V VM Remoting(*)\*'
-	#'\Hyper-V VM Save, Snapshot, and Restore(*)\*'
 )
 
 $global:BIZCounters = @(
@@ -10748,13 +10705,11 @@ $global:ALLCounters = @(
 	'\HTTP Service Url Groups(*)\*'
 	'\HTTP Service Request Queues(*)\*'
 	'\GPU Engine\*'
-	#_# '\Security System-Wide Statistics\*'	#we# see issue #383, reason for duplication of this counter on some 2022 Cluster nodes is unclear, no repro on 2019
 	)
 	If($OSBuild -lt 20348){	#383 do not add for Srv2022 or Win11
 		$global:ALLCounters += '\Security System-Wide Statistics\*'
 	}
 #endregion --- PerfMon Counters
-
 # initialize variables
 If((IsStart) -or $StartAutoLogger.IsPresent -or $Stop.IsPresent -or !([string]::IsNullOrEmpty($StartDiag)) -or !([string]::IsNullOrEmpty($CollectLog))){
 	if ([Environment]::Is64BitOperatingSystem -eq $True){
@@ -10814,21 +10769,11 @@ If((IsStart) -or $StartAutoLogger.IsPresent -or $Stop.IsPresent -or !([string]::
 }
 $global:BinArch			= "\Bin" + $global:ProcArch
 
-# Global variables previously (only defined) in _NET.psm1
-<#
-If($global:ProcArch -eq "x64"){
-	$global:NotMyFaultPath =  $global:ScriptFolder + $BinArch + "\NotMyfault64c.exe"
-}Else{
-	$global:NotMyFaultPath =  $global:ScriptFolder + $BinArch + "\NotMyfaultc.exe"
-}
-#>
 If($global:ProcArch -eq 'ARM') {$global:NotMyFaultPath =  $global:ScriptFolder + $BinArch + "\NotMyfaultc.exe"} else {$global:NotMyFaultPath =  $global:ScriptFolder + "\Bin\NotMyfaultc.exe"}
 $global:DFSutilPath 	= $global:ScriptFolder + $BinArch + "\DFSutil.exe"
 $global:PstatPath 		= $global:ScriptFolder + $BinArch + "\Pstat.exe"
 
-#
 # Script/Local variables
-#
 $script:FwScriptStartTime = Get-Date
 $script:FwMonitorIntervalInSec = 5 #we# _MonitorIntervalInSec is configurable in tss_config.cfg
 $global:ErrorLimit = 1
@@ -10991,17 +10936,6 @@ ForEach($TraceProvider in $ALLPODsProviderArray){
 	}
 }
 LogDebug " <--- done Building TraceDefinitionList"
-
-<#
-If($DebugMode.IsPresent){
-	LogDebug "======================	 Trace Definition List	 ======================"
-	ForEach($TraceDefinition in $TraceDefinitionList){
-		Write-Host ($TraceDefinition.Name + " ") -NoNewline -ForegroundColor Green
-	}
-	Write-Host ""
-	LogDebug "==========================================================================="
-}
-#>
 
 # Read tss_config.cfg file and validate parameters
 If((IsStart) -or ($CollectLog)){ # enable tss_config parameters for -CollectLog
@@ -11584,14 +11518,13 @@ Try{
 			ProcessHelp
 		}
 		default{
+			LogInfo "[$($MyInvocation.MyCommand.Name)] No parameters provided, running Basic log collection by default."
 			ProcessCollectLog
 		}
 	}
 }Finally{ 
-	# Usually we reach here when user stops the script with Ctrl + C
 	CleanUpandExit 
 }
-
 Write-Host ""
 CleanUpandExit
 #endregion MAIN
