@@ -9,7 +9,7 @@
             "type": "PowerShell",
             "request": "launch",
             "script": "${file}",
-            "args": ["-CollectLog Firewall -NewSession"],
+            "args": ["-CollectLog Basic -NewSession"],
             "cwd": "${file}"
         }
     ]
