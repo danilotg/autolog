@@ -1855,21 +1855,6 @@ function global:FwGetSrvSKU {
 	Return $IsServerSKU
 }
 
-function global:FwGetSrvRole {
-	# get Windows Feature and Role
-	If($IsServerSKU){
-		$Commands = @(
-			"Get-WindowsFeature -ErrorAction Stop | Out-File -Append $PrefixCn`Roles_Features_All.txt"
-		)
-		RunCommands "GetSrvRole" $Commands -ThrowException:$False -ShowMessage:$False
-		Get-WindowsFeature | Where-Object {$_.installed -eq $true} | Out-File -Append $PrefixCn`Roles_Features_Installed.txt
-	} else {
-		If($OSBuild -ge 9200) {
-			Get-WindowsOptionalFeature -Online | ft -AutoSize | Out-File -Append $PrefixCn`Roles_Features_Optional.txt
-		}
-	}
-}
-
 function global:FwGetSVC {
 	param(
 		[Parameter(Mandatory=$False)]
@@ -1941,67 +1926,6 @@ function global:FwGetWhoAmI {
 	RunCommands "WhoAmI" $Commands -ThrowException:$False -ShowMessage:$False
 }
 
-function Get-DNDDoLogs
-{
-    Param
-    (
-        [Alias("Prefix")]
-            [Parameter(Mandatory=$true, Position=0)]
-            [ValidateNotNullOrEmpty()]
-            [string] $_prefix,
-        [Alias("Temp")]
-            [Parameter(Mandatory=$false, Position=1)]
-            [string] $_tempdir=$null,
-        [Alias("RobocopyLog")]
-            [Parameter(Mandatory=$false, Position=2)]
-            [string] $_robocopy_log=$null,
-        [Alias("ErrorFile")]
-            [Parameter(Mandatory=$false, Position=3)]
-            [string] $_errorfile=$null,
-        [Alias("Line")]
-            [Parameter(Mandatory=$false, Position=4)]
-            [string] $_line=$null,
-        [Alias("FlushLogs")]
-            [Parameter(Mandatory=$false, Position=5)]
-            [string] $_flush_logs=$null
-    )
-
-    # Section Delivery Optimizaton logs and powershell for Win10+
-    $LogPrefixDO = "DOSVC"
-    if ($null -ne (Get-Service -Name dosvc -ErrorAction SilentlyContinue)) {
-        if ($_FLUSH_LOGS -eq 1) {
-            LogInfo ("[$LogPrefixDO] Flushing DO/USO/WU logs.")
-            $CommandsFlushLogs = @(
-                "Stop-Service -Name dosvc"
-                "Stop-Service -Name usosvc"
-                "Stop-Service -Name wuauserv"
-            )
-			RunCommands $LogPrefixDO $CommandsFlushLogs -ThrowException:$False -ShowMessage:$True
-        }
-        FwCreateFolder $_tempdir\logs\DOSVC
-        LogInfo ("[$LogPrefixDO] Getting DeliveryOptimization logs.")
-        $CommandsDOSVC = @(
-            "robocopy `"$Env:windir\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Logs`" `"$_tempdir\logs\dosvc`" *.log *.etl /W:1 /R:1 /NP /LOG+:$_robocopy_log /S | Out-Null"
-            "robocopy `"$Env:windir\SoftwareDistribution\DeliveryOptimization\SavedLogs`" `"$_tempdir\logs\dosvc`" *.log *.etl /W:1 /R:1 /NP /LOG+:$_robocopy_log /S | Out-Null"
-        )
-        RunCommands $LogPrefixDO $CommandsDOSVC -ThrowException:$False -ShowMessage:$True
-        
-        LogInfo ("[$LogPrefixDO] Getting DeliveryOptimization registry.")
-        $RegKeysDOSVC = @(
-            ('HKLM:SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization')
-        )
-        FwExportRegToOneFile $LogPrefixDO $RegKeysDOSVC "$_tempdir\logs\dosvc\registry_DeliveryOptimization.txt"
-
-        LogInfo ("[$LogPrefixDO] Getting DeliveryOptimization perf data.")
-		$outfile = "$_tempdir\logs\dosvc\DeliveryOptimization_info.txt"
-		$Commands = @(
-			"Get-DeliveryOptimizationPerfSnap	| Out-File -Append $outfile"
-			"Get-DeliveryOptimizationStatus		| Out-File -Append $outfile"
-		)
-		RunCommands "MDT" $Commands -ThrowException:$False -ShowMessage:$True
-    }
-}
-
 function global:CollectFirewallLog {
 
 	FwCreateLogFolder "$global:LogFolder\FirewallLogs"
@@ -2029,11 +1953,10 @@ function global:CollectFirewallLog {
 
 function global:CollectWuLog {
 		LogInfo "[$($MyInvocation.MyCommand.Name)] Is Running..."
-		$_tempdir= "$LogFolder\WU_Logs$LogSuffix"
+		$_tempdir="$LogFolder\WU_Logs$LogSuffix"
 		FwCreateLogFolder $_tempdir
-		$_prefix="$_tempdir\$Env:COMPUTERNAME" + "_"
-		$_robocopy_log=$_prefix+'robocopy.log'
-		$_errorfile= $_prefix+'Errorout.txt'
+		$_robocopy_log=$_tempdir+'robocopy.log'
+		$_errorfile= $_tempdir+'Errorout.txt'
 		$_flush_logs=0
 		$_WUETLPATH="$Env:windir\Logs\WindowsUpdate"
 		$_SIHETLPATH="$Env:windir\Logs\SIH"
@@ -2061,14 +1984,14 @@ function global:CollectWuLog {
 		LogInfo "[$($MyInvocation.MyCommand.Name)] Copying logs ..."
 		$SourceDestinationPaths = New-Object 'System.Collections.Generic.List[Object]'
 		$SourceDestinationPaths = @(
-			@("$Env:windir\windowsupdate.log", "$($_prefix)WindowsUpdate.log"),
-			@("$Env:windir\SoftwareDistribution\ReportingEvents.log", "$($_prefix)WindowsUpdate_ReportingEvents.log"),
-			@("$Env:localappdata\microsoft\windows\windowsupdate.log", "$($_prefix)WindowsUpdatePerUser.log"),
-			@("$Env:windir\windowsupdate (1).log", "$($_prefix)WindowsUpdate(1).log"),
-			@("$Env:windir.old\Windows\windowsupdate.log", "$($_prefix)Old.WindowsUpdate.log"),
-			@("$Env:windir.old\Windows\SoftwareDistribution\ReportingEvents.log", "$($_prefix)Old.ReportingEvents.log"),
-			@("$_OLDLOCALAPPDATA\microsoft\windows\windowsupdate.log", "$($_prefix)Old.WindowsUpdatePerUser.log"),
-			@("$Env:windir\SoftwareDistribution\Plugins\7D5F3CBA-03DB-4BE5-B4B36DBED19A6833\TokenRetrieval.log", "$($_prefix)WindowsUpdate_TokenRetrieval.log")
+			@("$Env:windir\windowsupdate.log", "$($_tempdir)\WindowsUpdate.log"),
+			@("$Env:windir\SoftwareDistribution\ReportingEvents.log", "$($_tempdir)\WindowsUpdate_ReportingEvents.log"),
+			@("$Env:localappdata\microsoft\windows\windowsupdate.log", "$($_tempdir)\WindowsUpdatePerUser.log"),
+			@("$Env:windir\windowsupdate (1).log", "$($_tempdir)\WindowsUpdate(1).log"),
+			@("$Env:windir.old\Windows\windowsupdate.log", "$($_tempdir)\Old.WindowsUpdate.log"),
+			@("$Env:windir.old\Windows\SoftwareDistribution\ReportingEvents.log", "$($_tempdir)\Old.ReportingEvents.log"),
+			@("$_OLDLOCALAPPDATA\microsoft\windows\windowsupdate.log", "$($_tempdir)\Old.WindowsUpdatePerUser.log"),
+			@("$Env:windir\SoftwareDistribution\Plugins\7D5F3CBA-03DB-4BE5-B4B36DBED19A6833\TokenRetrieval.log", "$($_tempdir)\WindowsUpdate_TokenRetrieval.log")
 		)
 		FwCopyFiles $SourceDestinationPaths -ShowMessage:$False
 		
@@ -2197,24 +2120,6 @@ function global:CollectWuLog {
 		  robocopy "$_OLDPROGRAMDATA%\USOShared\Logs" "$_tempdir\Windows.old\MUSE" /W:1 /R:1 /NP /LOG+:$_robocopy_log /S >$null
 		}
 		
-		# DO logs for Win10+
-		Get-DNDDoLogs $_prefix $_tempdir $_robocopy_log $_errorfile $_line $_flush_logs
-	
-		# WU BVT logs.
-		cmd /r mkdir $_tempdir\BVT >$null 2>&1
-		robocopy $Env:systemdrive\wubvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
-		robocopy $Env:systemdrive\dcatebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
-		robocopy $Env:systemdrive\wuappxebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
-		robocopy $Env:systemdrive\wuuxebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
-		robocopy $Env:systemdrive\wuauebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
-		robocopy $Env:systemdrive\WUE2ETest  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
-		robocopy $Env:systemdrive\taef\wubvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
-		robocopy $Env:systemdrive\taef\wuappxebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
-		robocopy $Env:systemdrive\taef\wuuxebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
-		robocopy $Env:systemdrive\taef\wuauebvt  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
-		robocopy $Env:systemdrive\taef\WUE2ETest  $_tempdir\BVT *.log /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
-		robocopy $Env:systemdrive\taef\WUE2ETest  $_tempdir\BVT *.wtl /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
-		
 		LogInfo "[$($MyInvocation.MyCommand.Name)] Copying token cache and license store ..."
 		robocopy "$Env:windir\ServiceProfiles\LocalService\AppData\Local\Microsoft\WSLicense" $_tempdir tokens.dat /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
 		robocopy "$Env:windir\SoftwareDistribution\Plugins\7D5F3CBA-03DB-4BE5-B4B36DBED19A6833" $_tempdir 117CAB2D-82B1-4B5A-A08C-4D62DBEE7782.cache /W:1 /R:1 /NP /LOG+:$_robocopy_log >$null
@@ -2228,43 +2133,44 @@ function global:CollectWuLog {
 		cmd /r Copy "$Env:windir\System32\Winevt\Logs\Microsoft-WS-Licensing%4Admin.evtx"  $_tempdir /y >$null 2>&1
 		cmd /r Copy "$Env:windir\System32\winevt\Logs\Microsoft-Windows-Kernel-PnP%4Configuration.evtx" $_tempdir /y >$null 2>&1
 		cmd /r Copy "$Env:windir\System32\winevt\Logs\Microsoft-Windows-Store%4Operational.evtx" $_tempdir /y >$null 2>&1
-		
+
 		LogInfo "[$($MyInvocation.MyCommand.Name)] Logging registry ..."
 		$RegKeysMiscInfoExport = @(
-			('HKLM:Software\Microsoft\Windows\CurrentVersion\WindowsUpdate', "$($_prefix)reg_wu.txt"),
-			('HKLM:Software\Microsoft\Windows\CurrentVersion\SideBySide\', "$($_prefix)reg_sidebyside.txt"),
-			('HKLM:Components\CorruptionDetectedDuringAcr', "$($_prefix)reg_comp_acr.txt"),
-			('HKLM:Software\Policies\Microsoft\Windows\WindowsUpdate', "$($_prefix)reg_wupolicy.txt"),
-			('HKLM:SYSTEM\CurrentControlSet\Control\MUI\UILanguages', "$($_prefix)reg_langpack.txt"),
-			('HKLM:Software\Policies\Microsoft\WindowsStore', "$($_prefix)reg_StorePolicy.txt"),
-			('HKLM:Software\Microsoft\Windows\CurrentVersion\WindowsStore\WindowsUpdate', "$($_prefix)reg_StoreWUApproval.txt"),
-			('HKLM:SYSTEM\CurrentControlSet\Control\FirmwareResources', "$($_prefix)reg_FirmwareResources.txt"),
-			('HKLM:Software\Microsoft\WindowsSelfhost', "$($_prefix)reg_WindowsSelfhost.txt"),
-			('HKLM:Software\Microsoft\WindowsUpdate', "$($_prefix)reg_wuhandlers.txt"),
-			('HKLM:Software\Microsoft\Windows\CurrentVersion\Appx', "$($_prefix)reg_appx.txt"),
-			('HKLM:Software\Microsoft\Windows NT\CurrentVersion\Superfetch', "$($_prefix)reg_superfetch.txt"),
-			('HKLM:Software\Setup', "$($_prefix)reg_Setup.txt"),
-			('HKCU:Software\Microsoft\Windows\CurrentVersion\Policies\WindowsUpdate', "$($_prefix)reg_peruser_wupolicy.txt"),
-			('HKLM:Software\Microsoft\PolicyManager\current\device\Update', "$($_prefix)reg_wupolicy_mdm.txt"),
-			('HKLM:Software\Microsoft\WindowsUpdate\UX\Settings', "$($_prefix)reg_wupolicy_ux.txt"),
-			('HKLM:Software\Microsoft\Windows\CurrentVersion\WaaSAssessment', "$($_prefix)reg_WaasAssessment.txt"),
-			('HKLM:Software\Microsoft\sih', "$($_prefix)reg_sih.txt")
+			('HKLM:Software\Microsoft\Windows\CurrentVersion\WindowsUpdate', "$($_tempdir)\reg_wu.txt"),
+			('HKLM:Software\Microsoft\Windows\CurrentVersion\SideBySide\', "$($_tempdir)\reg_sidebyside.txt"),
+			('HKLM:Components\CorruptionDetectedDuringAcr', "$($_tempdir)\reg_comp_acr.txt"),
+			('HKLM:Software\Policies\Microsoft\Windows\WindowsUpdate', "$($_tempdir)\reg_wupolicy.txt"),
+			('HKLM:SYSTEM\CurrentControlSet\Control\MUI\UILanguages', "$($_tempdir)\reg_langpack.txt"),
+			('HKLM:Software\Policies\Microsoft\WindowsStore', "$($_tempdir)\reg_StorePolicy.txt"),
+			('HKLM:Software\Microsoft\Windows\CurrentVersion\WindowsStore\WindowsUpdate', "$($_tempdir)\reg_StoreWUApproval.txt"),
+			('HKLM:SYSTEM\CurrentControlSet\Control\FirmwareResources', "$($_tempdir)\reg_FirmwareResources.txt"),
+			('HKLM:Software\Microsoft\WindowsSelfhost', "$($_tempdir)\reg_WindowsSelfhost.txt"),
+			('HKLM:Software\Microsoft\WindowsUpdate', "$($_tempdir)\reg_wuhandlers.txt"),
+			('HKLM:Software\Microsoft\Windows\CurrentVersion\Appx', "$($_tempdir)\reg_appx.txt"),
+			('HKLM:Software\Microsoft\Windows NT\CurrentVersion\Superfetch', "$($_tempdir)\reg_superfetch.txt"),
+			('HKLM:Software\Setup', "$($_tempdir)\reg_Setup.txt"),
+			('HKCU:Software\Microsoft\Windows\CurrentVersion\Policies\WindowsUpdate', "$($_tempdir)\reg_peruser_wupolicy.txt"),
+			('HKLM:Software\Microsoft\PolicyManager\current\device\Update', "$($_tempdir)\reg_wupolicy_mdm.txt"),
+			('HKLM:Software\Microsoft\WindowsUpdate\UX\Settings', "$($_tempdir)\reg_wupolicy_ux.txt"),
+			('HKLM:Software\Microsoft\Windows\CurrentVersion\WaaSAssessment', "$($_tempdir)\reg_WaasAssessment.txt"),
+			('HKLM:Software\Microsoft\sih', "$($_tempdir)\reg_sih.txt")
 		)
 		ExportRegistry "MiscInfo" $RegKeysMiscInfoExport -RealExport $true
 		
 		$RegKeysMiscInfoProperty = @(
-			('HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'BuildLab', "$($_prefix)reg_BuildInfo.txt"),
-			('HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'BuildLabEx', "$($_prefix)reg_BuildInfo.txt"),
-			('HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'UBR', "$($_prefix)reg_BuildInfo.txt"),
-			('HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'ProductName', "$($_prefix)reg_BuildInfo.txt"),
-			('HKLM:SOFTWARE\Microsoft\Windows\CurrentVersion\AppModel', 'Version', "$($_prefix)reg_AppModelVersion.txt")
+			('HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'BuildLab', "$($_tempdir)\reg_BuildInfo.txt"),
+			('HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'BuildLabEx', "$($_tempdir)\reg_BuildInfo.txt"),
+			('HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'UBR', "$($_tempdir)\reg_BuildInfo.txt"),
+			('HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'ProductName', "$($_tempdir)\reg_BuildInfo.txt"),
+			('HKLM:SOFTWARE\Microsoft\Windows\CurrentVersion\AppModel', 'Version', "$($_tempdir)\reg_AppModelVersion.txt")
 		)
 		ExportRegistry "MiscInfo" $RegKeysMiscInfoProperty
 		
 		LogInfo "[$($MyInvocation.MyCommand.Name)] Getting directory lists ..."
+
 		$Commands = @(
-			"cmd /r Dir $Env:windir\SoftwareDistribution /s  | Out-File -Append $($_prefix)dir_softwaredistribution.txt"
-			"cmd /r Dir $Env:windir\SoftwareDistribution /ah | Out-File -Append $($_prefix)dir_softwaredistribution_hidden.txt"
+			"cmd /r Dir $Env:windir\SoftwareDistribution /s  | Out-File -Append $($_tempdir)\dir_softwaredistribution.txt"
+			"cmd /r Dir $Env:windir\SoftwareDistribution /ah | Out-File -Append $($_tempdir)\dir_softwaredistribution_hidden.txt"
 		)
 		RunCommands "directory_lists" $Commands -ThrowException:$False -ShowMessage:$True
 		
@@ -2287,23 +2193,29 @@ function global:CollectWuLog {
 		
 		LogInfo "[$($MyInvocation.MyCommand.Name)] Getting installed update list ..."
 		$Commands = @(
-			"Get-CimInstance -ClassName win32_quickfixengineering | Out-File -Append $($_prefix)InstalledUpdates.log"
-			"sc.exe query wuauserv | Out-File -Append $($_prefix)wuauserv-state.txt"
+			"Get-CimInstance -ClassName win32_quickfixengineering | Out-File -Append $($_tempdir)\InstalledUpdates.log"
+			"sc.exe query wuauserv | Out-File -Append $($_tempdir)\wuauserv-state.txt"
 		)
 		RunCommands "installed_update" $Commands -ThrowException:$False -ShowMessage:$True
+
+		LogInfo "[$($MyInvocation.MyCommand.Name)] Exporting Component Based Servicing hive"
+		$Commands = @(
+			"reg save 'HKLM\Software\Microsoft\Windows\CurrentVersion\Component Based Servicing' '$($_tempdir)\Component Based Servicing.HIV' 2>&1 | Out-Null"
+		)
+		RunCommands "CSHive" $Commands -ThrowException:$False -ShowMessage:$True
 		
 		LogInfo "[$($MyInvocation.MyCommand.Name)] Collecting file versions ..."
 		
 		$binaries = @("wuaext.dll", "wuapi.dll", "wuaueng.dll", "wucltux.dll", "wudriver.dll", "wups.dll", "wups2.dll", "wusettingsprovider.dll", "wushareduxresources.dll", "wuwebv.dll", "wuapp.exe", "wuauclt.exe", "storewuauth.dll", "wuuhext.dll", "wuuhmobile.dll", "wuau.dll", "wuautoappupdate.dll")
 		foreach($file in $binaries)
 		{
-			FwFileVersion -Filepath ("$Env:windir\system32\$file") | Out-File -FilePath ($_prefix+"FilesVersion.txt") -Append
+			FwFileVersion -Filepath ("$Env:windir\system32\$file") | Out-File -FilePath "$($_tempdir)\FilesVersion.txt" -Append
 		}
 	
 		$muis = @("wuapi.dll.mui", "wuaueng.dll.mui", "wucltux.dll.mui", "wusettingsprovider.dll.mui", "wushareduxresources.dll.mui")
 		foreach($file in $muis)
 		{
-			FwFileVersion -Filepath ("$Env:windir\system32\en-US\$file") | Out-File -FilePath ($_prefix+"FilesVersion.txt") -Append
+			FwFileVersion -Filepath ("$Env:windir\system32\en-US\$file") | Out-File -FilePath "$($_tempdir)\FilesVersion.txt" -Append
 		}
 		
 		# end
@@ -2475,8 +2387,6 @@ Function global:Basic-Systeminfo{
 	}Else{
 		$Commands += "Get-Tpm -ErrorAction Ignore | Out-File -Append $BasicLogFolder\TPM.txt"
 	}
-	# Windows feature
-	FwGetSrvRole
 
 	# CoreInfo
 	$CoreInfoCommand = Get-Command "CoreInfo.exe" -ErrorAction Ignore
@@ -2667,8 +2577,6 @@ Function global:Basic-Setupinfo{
 	RunCommands $LogPrefix $CopyCmds -ThrowException:$False -ShowMessage:$True
 
 	LogInfo "[$($MyInvocation.MyCommand.Name)] Exporting setup registry keys and getting package info"
-	#reg save "HKLM\COMPONENTS" "$SetupLogFolder\COMPONENT.HIV"
-	reg save "HKLM\Software\Microsoft\Windows\CurrentVersion\Component Based Servicing" "$SetupLogFolder\Component Based Servicing.HIV" 2>&1 | Out-Null
 	FwExportRegToOneFile $LogPrefix "HKLM:System\CurrentControlSet\services\TrustedInstaller" "$BasicLogFolder\_Reg_TrustedInstaller.txt"
 	FwExportRegToOneFile $LogPrefix "HKLM:Software\Microsoft\Windows\CurrentVersion\Setup\State" "$BasicLogFolder\_Reg_State.txt"
 	dism /online /get-packages 2>&1| Out-File "$SetupLogFolder\dism-get-package.txt"
