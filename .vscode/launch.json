@@ -9,7 +9,7 @@
             "type": "PowerShell",
             "request": "launch",
             "script": "${file}",
-            "args": ["-CollectLog Wu -NewSession"],
+            "args": ["-Dump Post -NewSession"],
             "cwd": "${file}"
         }
     ]

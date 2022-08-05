@@ -13,17 +13,16 @@ Collect logs for each component:
       PS> .\AutoLog.ps1 -CollectLog Basic
 #>
 
-[CmdletBinding(DefaultParameterSetName='Start')]
+[CmdletBinding(DefaultParameterSetName='Help')]
 Param (
 	[Parameter(ParameterSetName='CollectLog', Position=0)]
 	[String[]]$CollectLog,
+	[Parameter(ParameterSetName='Dump', Position=0)]
+	[String[]]$Dump,
 	[switch]$Defender,
 	[Parameter(ParameterSetName='Help', Position=0)]
 	[Switch]$Help,
-#endregion ----- DND POD providers -----
-#region ----- SEC POD providers -----
 	[Int]$DefenderDurInMin=$Null,
-#endregion ----- SEC POD providers -----
 	[switch]$DebugMode,
 	[Switch]$NewSession,
 	[switch]$AcceptEula = $True,
@@ -2229,6 +2228,36 @@ function global:CollectWuLog {
 		LogInfo "[$($MyInvocation.MyCommand.Name)] Finished DND_WUlogs!"
 }
 
+function global:DumpPostLog {
+	param(
+		[ValidateNotNullOrEmpty()]
+		[Parameter(Mandatory=$False)]
+		[String]$Scenario=$Null,
+		[Parameter(Mandatory=$False)]
+		[String]$NumDays=5
+	)
+	If([string]::IsNullOrEmpty($Stage)){
+
+	}
+	LogInfo "[$($MyInvocation.MyCommand.Name)] Running Dump collection..."
+	$script:BasicSubFolder = "BasicLog$LogSuffix"
+	$DumpLogFolder = "$LogFolder\Dumps"
+	Try{
+		FwCreateLogFolder $DumpLogFolder
+	}Catch{
+		LogError ("Unable to create log folder." + $_.Exception.Message)
+		Return
+	}
+	
+	$dmpPath = "$($Env:SystemRoot)\Memory.dmp"
+	
+	If(Test-Path -Path $dmpPath){
+		$dmp = Get-Item -Path $dmpPath -Force
+		If($dmp.CreationTime -le (Get-Date).AddDays(-$NumDays)){
+			Copy-Item -Path $dmp.FullName -Destination "$DumpLogFolder\Memory.dmp" -Force 
+		}
+	}
+}
 
 function global:CollectBasicLog {
 	param(
@@ -2426,7 +2455,7 @@ Function global:Basic-Systeminfo{
 	LogInfo "[$($MyInvocation.MyCommand.Name)] Running tasklist -v"
 	tasklist /v 2>&1 | Out-File -Append "$BasicLogFolder\tasklist-v.txt"
 	# .NET version
-	If(test-path -path "HKLM:Software\Microsoft\NET Framework Setup\NDP\v4\Full"){
+	If(Test-Path -Path "HKLM:Software\Microsoft\NET Framework Setup\NDP\v4\Full"){
 		$Full = Get-ItemProperty "HKLM:Software\Microsoft\NET Framework Setup\NDP\v4\Full"
 		Write-Output(".NET version: $($Full.Version)") | Out-File -Append "$BasicLogFolder\DotNet-Version.txt"
 		Write-Output("") | Out-File -Append "$BasicLogFolder\DotNet-Version.txt"
@@ -4550,6 +4579,37 @@ Function RunUnSetWer{
 	}
 	LogInfo ("Disabling WER (Windows Error Reporting) settings is completed.")
 
+}
+
+Function ProcessDumpCollection {
+	
+	LogInfo "[$($MyInvocation.MyCommand.Name)] Started with -CollectLog $DumpLog"
+
+	$RequestedLogs = $DumpLog -Split '\s+'
+
+	If (("Post" -in ($RequestedLogs))){
+		CollectBasicLog
+	}
+
+	ForEach($RequestedLog in $RequestedLogs){
+
+		$ComponentLogCollectionFunc = 'Dump' + $RequestedLog + 'Log'
+		$Commandobj = Get-Command $ComponentLogCollectionFunc -CommandType Function -ErrorAction Ignore # Ignore exception
+
+		If($Commandobj -ne $Null){
+			Try{
+				LogInfo "[$($MyInvocation.MyCommand.Name)] Calling log collection function ($ComponentLogCollectionFunc)"
+				& $ComponentLogCollectionFunc
+			}Catch{
+				LogWarn ("Exception happened in $ComponentLogCollectionFunc.")
+				LogException ("An error happened in $ComponentLogCollectionFunc") $_ $fLogFileOnly
+				Continue
+			}
+		}Else{
+			Continue
+		}
+	}
+	CompressShow
 }
 
 Function ProcessCollectLog {
@@ -7280,6 +7340,9 @@ Try{
 	Switch($global:ParameterArray[0]){
 		'CollectLog'{
 			ProcessCollectLog
+		}
+		'Dump'{
+			ProcessDumpCollection
 		}
 		'Help'{
 			ProcessHelp
